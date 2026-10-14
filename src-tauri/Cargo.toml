@@ -1,0 +1,26 @@
+[package]
+name = "local-llm-client"
+version = "0.1.0"
+description = "A private desktop client for remote local LLMs"
+authors = ["Local LLM Client Contributors"]
+edition = "2021"
+
+[lib]
+name = "local_llm_client_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+dirs = "6"
+futures-util = "0.3"
+keyring = { version = "3", features = ["apple-native"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+shell-words = "1"
+ssh2 = { version = "0.9", features = ["vendored-openssl"] }
+tauri = { version = "2", features = [] }
+thiserror = "2"
+tokio = { version = "1", features = ["time"] }
