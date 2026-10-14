@@ -6,11 +6,14 @@ function option(name, fallback) {
 }
 
 const target = option("target");
-const model = option("model", "qwen3:8b");
+const model = option(
+  "model",
+  "hf.co/0xSojalSec/Qwen3.8-27B-Uncensored-Cyber-agent:IQ4_XS-imatrix-fromq8",
+);
 const remotePort = Number(option("remote-port", "11434"));
 const localPort = Number(option("local-port", "18080"));
 if (!target || target.startsWith("-") || !Number.isInteger(remotePort) || !Number.isInteger(localPort)) {
-  console.error("Usage: npm run test:e2e:windows -- --target user@host [--model qwen3:8b] [--remote-port 11434] [--local-port 18080]");
+  console.error("Usage: npm run test:e2e:windows -- --target user@host [--model <ollama-model>] [--remote-port 11434] [--local-port 18080]");
   process.exit(2);
 }
 
@@ -56,12 +59,45 @@ async function assertInvalidModel() {
   if (response.ok) throw new Error("Invalid model unexpectedly succeeded");
 }
 
+async function assertToolCalling() {
+  const response = await fetch(`${baseUrl}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: "Use the list_directory tool to inspect the workspace root. The root path is an empty string." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "list_directory",
+          description: "List files in a workspace-relative directory.",
+          parameters: {
+            type: "object",
+            properties: { path: { type: "string" } },
+            required: ["path"],
+          },
+        },
+      }],
+      tool_choice: "auto",
+      stream: false,
+      temperature: 0,
+    }),
+    signal: AbortSignal.timeout(180_000),
+  });
+  if (!response.ok) throw new Error(`Tool-call request failed with HTTP ${response.status}`);
+  const payload = await response.json();
+  const call = payload.choices?.[0]?.message?.tool_calls?.[0];
+  if (call?.function?.name !== "list_directory") throw new Error("Cyber model did not return the expected list_directory tool call");
+}
+
 let tunnel = openTunnel();
 try {
   await waitForHealth();
   console.log("PASS: SSH local forwarding health");
   await assertStreaming();
   console.log("PASS: OpenAI-compatible SSE streaming");
+  await assertToolCalling();
+  console.log("PASS: Cyber model tool calling");
   await assertInvalidModel();
   console.log("PASS: invalid model error");
   tunnel.kill("SIGTERM");

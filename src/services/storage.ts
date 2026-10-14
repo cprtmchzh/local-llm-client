@@ -31,13 +31,25 @@ export const appStorage = {
     write(keys.settings, settings);
   },
   loadConversations(): Conversation[] {
-    return read<Conversation[]>(keys.conversations, []);
+    return read<Conversation[]>(keys.conversations, []).map((conversation) =>
+      conversation.modelId === "qwen3-ollama-agent"
+        ? { ...conversation, modelId: "qwen-cyber-27b" }
+        : conversation,
+    );
   },
   saveConversations(conversations: Conversation[]): void {
     write(keys.conversations, conversations);
   },
   loadModels(): ModelInfo[] {
-    return read<ModelInfo[]>(keys.models, defaultModels);
+    const stored = read<ModelInfo[]>(keys.models, defaultModels);
+    const currentById = new Map(defaultModels.map((model) => [model.id, model]));
+    const migrated = stored
+      .filter((model) => model.id !== "qwen3-ollama-agent")
+      .map((model) => currentById.get(model.id) ?? model);
+    return defaultModels.reduce(
+      (models, model) => models.some((candidate) => candidate.id === model.id) ? models : [...models, model],
+      migrated,
+    );
   },
   saveModels(models: ModelInfo[]): void {
     write(keys.models, models);

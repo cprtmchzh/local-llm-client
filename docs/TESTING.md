@@ -22,7 +22,7 @@ Windows 장비에 Ollama가 이미 실행 중이면 다음 비파괴 harness로 
 ```bash
 npm run test:e2e:windows -- \
   --target user@windows-host \
-  --model qwen3:8b \
+  --model hf.co/0xSojalSec/Qwen3.8-27B-Uncensored-Cyber-agent:IQ4_XS-imatrix-fromq8 \
   --remote-port 11434
 ```
 
@@ -59,7 +59,8 @@ Windows 11 Pro 장비에 비대화형 SSH key 인증으로 연결해 다음을 �
 | Windows localhost runtime discovery | PASS | Ollama 11434와 Qwen 계열 tool-capable models 확인 |
 | local port forwarding health | PASS | Mac `127.0.0.1:18080`을 통한 `/api/tags` 응답 |
 | OpenAI-compatible SSE | PASS | `/v1/chat/completions` chunk stream과 `[DONE]` 확인 |
-| Qwen tool calling | PASS | 실제 `qwen3:8b`가 `list_directory` tool call JSON 반환 |
+| Qwen 3.8 Cyber streaming | PASS | 실제 `Qwen3.8-27B-Uncensored-Cyber-agent`가 완전한 SSE와 `[DONE]` 반환 |
+| Qwen 3.8 Cyber tool calling | PASS | 실제 Cyber Agent 모델이 `list_directory` tool call JSON 반환 |
 | invalid model | PASS | harness가 비정상 모델의 HTTP 실패 확인 |
 | tunnel reconnect | PASS | listener 종료/재생성 후 health 회복 |
 | 기본 llama.cpp profile paths | EXPECTED FAIL | 샘플 `C:\\llama.cpp`, `C:\\models`가 장비에 없음 |

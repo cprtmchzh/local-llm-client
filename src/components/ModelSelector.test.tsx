@@ -16,7 +16,7 @@ describe("ModelSelector", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Qwen Cyber 27B/ }));
+    await user.click(screen.getByRole("button", { name: /Qwen 3\.8 Cyber 27B/ }));
     expect(screen.getByRole("listbox", { name: "사용할 모델" })).toBeInTheDocument();
     await user.click(screen.getByRole("option", { name: /Qwen Coder/ }));
     expect(onSelect).toHaveBeenCalledWith("qwen-coder");
@@ -32,7 +32,7 @@ describe("ModelSelector", () => {
       />,
     );
 
-    const trigger = screen.getByRole("button", { name: /Qwen Cyber 27B/ });
+    const trigger = screen.getByRole("button", { name: /Qwen 3\.8 Cyber 27B/ });
     await user.click(trigger);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
     await user.keyboard("{Escape}");

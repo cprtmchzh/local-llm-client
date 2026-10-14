@@ -39,7 +39,8 @@ npm run tauri dev
 npm test
 npm run build
 cargo check --manifest-path src-tauri/Cargo.toml
-npm run test:e2e:windows -- --target user@windows-host --model qwen3:8b
+npm run test:e2e:windows -- --target user@windows-host \
+  --model hf.co/0xSojalSec/Qwen3.8-27B-Uncensored-Cyber-agent:IQ4_XS-imatrix-fromq8
 ```
 
 ## 실제 Windows 연결
