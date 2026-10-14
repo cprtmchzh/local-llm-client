@@ -1,0 +1,42 @@
+[
+  {
+    "id": "qwen-general",
+    "name": "Qwen General",
+    "category": "general",
+    "runtimeId": "llama-cpp",
+    "modelPath": "C:\\models\\qwen-general.gguf",
+    "contextLength": 32768,
+    "launchProfileId": "balanced",
+    "description": "일상적인 질문과 문서 작업"
+  },
+  {
+    "id": "qwen-coder",
+    "name": "Qwen Coder",
+    "category": "coding",
+    "runtimeId": "llama-cpp",
+    "modelPath": "C:\\models\\qwen-coder.gguf",
+    "contextLength": 32768,
+    "launchProfileId": "balanced",
+    "description": "코드 작성, 리뷰 및 디버깅"
+  },
+  {
+    "id": "qwen-cyber-27b",
+    "name": "Qwen Cyber 27B",
+    "category": "security",
+    "runtimeId": "llama-cpp",
+    "modelPath": "C:\\models\\qwen-cyber-27b.gguf",
+    "contextLength": 32768,
+    "launchProfileId": "large-model",
+    "description": "보안 분석과 위협 모델링"
+  },
+  {
+    "id": "agent-model",
+    "name": "Agent Workspace",
+    "category": "agent",
+    "runtimeId": "openai-compatible",
+    "modelPath": "agent-model",
+    "contextLength": 65536,
+    "launchProfileId": "agent",
+    "description": "도구 사용과 장기 작업"
+  }
+]
