@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e:windows": "node scripts/windows-e2e.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
