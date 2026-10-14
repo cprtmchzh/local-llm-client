@@ -1,27 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { ChatRequest, ProviderContext } from "../../domain/types";
-import type {
-  ConnectionProvider,
-  ModelProvider,
-  ProviderBundle,
-  RuntimeProvider,
-  WakeProvider,
-} from "./contracts";
+import type { AgentResponse } from "../../domain/agent";
+import { renderLaunchCommand } from "../../domain/launchCommand";
+import type { ShellResult } from "../../domain/tools";
+import type { ChatRequest, ProviderContext, RuntimeInstance } from "../../domain/types";
+import { normalizeOpenAiAgentResponse, qwenToolsPrompt } from "../modelAdapter";
+import type { ConnectionProvider, ModelProvider, ProviderBundle, RuntimeProvider, WakeProvider } from "./contracts";
 
 function connectionArgs(context: ProviderContext) {
-  return {
-    host: context.settings.host,
-    port: context.settings.sshPort,
-    username: context.settings.username,
-    authentication: context.settings.authentication,
-    privateKeyPath: context.settings.privateKeyPath,
-  };
+  return { host: context.settings.host, port: context.settings.sshPort, username: context.settings.username, authentication: context.settings.authentication, privateKeyPath: context.settings.privateKeyPath };
 }
 
-function apiBaseUrl(context: ProviderContext): string {
+function directApiBaseUrl(context: ProviderContext): string {
   return context.profile.apiBaseUrl.replaceAll("{host}", context.settings.host);
 }
+
+interface TunnelInfo { id: string; localPort: number; remotePort: number }
 
 class TauriWakeProvider implements WakeProvider {
   async wake(context: ProviderContext): Promise<void> {
@@ -29,128 +23,113 @@ class TauriWakeProvider implements WakeProvider {
       await invoke("execute_custom_wake", { command: context.settings.customWakeCommand });
       return;
     }
-    await invoke("send_magic_packet", {
-      macAddress: context.settings.macAddress,
-      broadcastAddress: context.settings.broadcastAddress,
-    });
+    await invoke("send_magic_packet", { macAddress: context.settings.macAddress, broadcastAddress: context.settings.broadcastAddress });
   }
 }
 
 class TauriConnectionProvider implements ConnectionProvider {
+  private readonly tunnels = new Map<string, TunnelInfo>();
+
+  private tunnelKey(context: ProviderContext): string {
+    return `${context.settings.username}@${context.settings.host}:${context.settings.sshPort}/${context.profile.port}`;
+  }
+
   async isReachable(context: ProviderContext): Promise<boolean> {
-    return invoke<boolean>("check_host", {
-      host: context.settings.host,
-      port: context.settings.sshPort,
-      timeoutMs: 1_500,
-    });
+    return invoke<boolean>("check_host", { host: context.settings.host, port: context.settings.sshPort, timeoutMs: 1_500 });
   }
 
   async connect(context: ProviderContext): Promise<void> {
-    await invoke("check_ssh", connectionArgs(context));
+    await invoke("check_ssh", { connection: connectionArgs(context) });
+    if (!context.settings.directApiMode) {
+      const key = this.tunnelKey(context);
+      const stale = this.tunnels.get(key);
+      if (stale) await invoke("stop_ssh_tunnel", { tunnelId: stale.id });
+      const tunnel = await invoke<TunnelInfo>("start_ssh_tunnel", { connection: connectionArgs(context), remotePort: context.profile.port });
+      this.tunnels.set(key, tunnel);
+    }
   }
 
   async disconnect(): Promise<void> {
-    // SSH sessions are short-lived by design; no persistent socket contains credentials.
+    await Promise.all([...this.tunnels.values()].map((tunnel) => invoke("stop_ssh_tunnel", { tunnelId: tunnel.id })));
+    this.tunnels.clear();
   }
 
-  async execute(context: ProviderContext, command: string): Promise<string> {
-    return invoke<string>("execute_ssh", { ...connectionArgs(context), command });
+  async execute(context: ProviderContext, command: string, timeoutMs = 120_000): Promise<ShellResult> {
+    return invoke<ShellResult>("execute_ssh", { connection: connectionArgs(context), command, timeoutMs });
   }
-}
 
-function renderCommand(context: ProviderContext): string {
-  const values: Record<string, string> = {
-    modelPath: context.model.modelPath,
-    contextSize: String(context.profile.contextSize),
-    gpuLayers: String(context.profile.gpuLayers),
-    threads: String(context.profile.threads),
-    batchSize: String(context.profile.batchSize),
-    port: String(context.profile.port),
-  };
-  return Object.entries(values).reduce(
-    (command, [key, value]) => command.replaceAll(`{${key}}`, value),
-    context.profile.command,
-  );
+  apiBaseUrl(context: ProviderContext): string {
+    if (context.settings.directApiMode) return directApiBaseUrl(context);
+    const tunnel = this.tunnels.get(this.tunnelKey(context));
+    if (!tunnel) throw new Error("SSH model API tunnel is not connected");
+    return `http://127.0.0.1:${tunnel.localPort}/v1`;
+  }
 }
 
 class TauriRuntimeProvider implements RuntimeProvider {
   constructor(private readonly connection: TauriConnectionProvider) {}
 
   async isRunning(context: ProviderContext): Promise<boolean> {
-    return invoke<boolean>("check_http_health", {
-      url: `${apiBaseUrl(context).replace(/\/v1$/, "")}${context.profile.healthEndpoint}`,
-      timeoutMs: 1_500,
-    });
+    const owned = await this.instance(context);
+    if (owned?.status === "running") return true;
+    return invoke<boolean>("check_http_health", { url: `${this.connection.apiBaseUrl(context).replace(/\/v1$/, "")}${context.profile.healthEndpoint}`, timeoutMs: 1_500 });
   }
 
   async start(context: ProviderContext): Promise<void> {
-    const command = renderCommand(context);
-    if (!command) return;
-    await this.connection.execute(
-      context,
-      `powershell -NoProfile -NonInteractive -Command "Start-Process -WindowStyle Hidden -FilePath 'cmd.exe' -ArgumentList '/c ${command.replaceAll('"', '\\"')}'"`,
-    );
+    if (!context.profile.launch) return;
+    const launch = renderLaunchCommand(context.profile.launch, context);
+    await invoke<RuntimeInstance>("start_remote_runtime", { connection: connectionArgs(context), executable: launch.executable, args: launch.args, modelId: context.model.id, port: context.profile.port });
   }
 
   async stop(context: ProviderContext): Promise<void> {
-    await this.connection.execute(
-      context,
-      `powershell -NoProfile -NonInteractive -Command "Get-NetTCPConnection -LocalPort ${context.profile.port} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess | Stop-Process -Force"`,
-    );
+    const instance = await this.instance(context);
+    if (!instance?.ownedByApp) return;
+    await invoke("stop_remote_runtime", { connection: connectionArgs(context), pid: instance.pid, modelId: instance.modelId, port: instance.port });
   }
 
   async restart(context: ProviderContext): Promise<void> {
     await this.stop(context);
     await this.start(context);
   }
+
+  async instance(context: ProviderContext): Promise<RuntimeInstance | null> {
+    return invoke<RuntimeInstance | null>("inspect_remote_runtime", { connection: connectionArgs(context), modelId: context.model.id, port: context.profile.port });
+  }
 }
 
 class TauriModelProvider implements ModelProvider {
+  constructor(private readonly connection: TauriConnectionProvider) {}
+
   async isHealthy(context: ProviderContext): Promise<boolean> {
-    return invoke<boolean>("check_http_health", {
-      url: `${apiBaseUrl(context).replace(/\/v1$/, "")}${context.profile.healthEndpoint}`,
-      timeoutMs: 2_000,
-    });
+    return invoke<boolean>("check_http_health", { url: `${this.connection.apiBaseUrl(context).replace(/\/v1$/, "")}${context.profile.healthEndpoint}`, timeoutMs: 2_000 });
   }
 
   async streamChat(request: ChatRequest, onToken: (token: string) => void): Promise<void> {
     const tokenEvent = `chat://token/${request.requestId}`;
     const doneEvent = `chat://done/${request.requestId}`;
     const errorEvent = `chat://error/${request.requestId}`;
-
     await new Promise<void>((resolve, reject) => {
       const cleanups: Array<() => void> = [];
       const cleanup = () => cleanups.splice(0).forEach((dispose) => dispose());
-
       Promise.all([
         listen<string>(tokenEvent, (event) => onToken(event.payload)),
-        listen(doneEvent, () => {
-          cleanup();
-          resolve();
-        }),
-        listen<string>(errorEvent, (event) => {
-          cleanup();
-          reject(new Error(event.payload));
-        }),
-      ])
-        .then((unlisteners) => {
-          cleanups.push(...unlisteners);
-          return invoke("stream_chat", { request });
-        })
-        .catch((error: unknown) => {
-          cleanup();
-          reject(error instanceof Error ? error : new Error(String(error)));
-        });
+        listen(doneEvent, () => { cleanup(); resolve(); }),
+        listen<string>(errorEvent, (event) => { cleanup(); reject(new Error(event.payload)); }),
+      ]).then((unlisteners) => {
+        cleanups.push(...unlisteners);
+        return invoke("stream_chat", { request });
+      }).catch((error: unknown) => { cleanup(); reject(error instanceof Error ? error : new Error(String(error))); });
     });
+  }
+
+  async completeAgent(context: ProviderContext, task: string, steps: unknown[], tools: unknown[]): Promise<AgentResponse> {
+    const names = tools.map((tool) => typeof tool === "string" ? tool : JSON.stringify(tool));
+    const raw = await invoke<unknown>("complete_agent", { baseUrl: this.connection.apiBaseUrl(context), model: context.model.modelPath, temperature: context.profile.temperature, system: qwenToolsPrompt(names), task, steps, tools });
+    return normalizeOpenAiAgentResponse(raw);
   }
 }
 
 export function createTauriProviders(): ProviderBundle {
   const connection = new TauriConnectionProvider();
-  return {
-    wake: new TauriWakeProvider(),
-    connection,
-    runtime: new TauriRuntimeProvider(connection),
-    model: new TauriModelProvider(),
-  };
+  return { wake: new TauriWakeProvider(), connection, runtime: new TauriRuntimeProvider(connection), model: new TauriModelProvider(connection) };
 }

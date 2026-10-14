@@ -1,4 +1,6 @@
-import type { ChatRequest, ProviderContext } from "../../domain/types";
+import type { AgentResponse } from "../../domain/agent";
+import type { ShellResult } from "../../domain/tools";
+import type { ChatRequest, ProviderContext, RuntimeInstance } from "../../domain/types";
 import { sleep } from "../../lib/utils";
 import type {
   ConnectionProvider,
@@ -40,9 +42,13 @@ class MockConnectionProvider implements ConnectionProvider {
     this.environment.connected = false;
   }
 
-  async execute(_context: ProviderContext, command: string): Promise<string> {
+  async execute(_context: ProviderContext, command: string): Promise<ShellResult> {
     await sleep(150);
-    return `Mock command completed: ${command}`;
+    return { command, stdout: `Mock command completed: ${command}`, stderr: "", exitCode: 0, durationMs: 150, timedOut: false };
+  }
+
+  apiBaseUrl(context: ProviderContext): string {
+    return context.profile.apiBaseUrl.replaceAll("{host}", context.settings.host);
   }
 }
 
@@ -67,6 +73,10 @@ class MockRuntimeProvider implements RuntimeProvider {
   async restart(_context: ProviderContext): Promise<void> {
     await this.stop();
     await this.start();
+  }
+
+  async instance(context: ProviderContext): Promise<RuntimeInstance | null> {
+    return this.environment.runtimeRunning ? { pid: 4242, modelId: context.model.id, port: context.profile.port, startedAt: new Date().toISOString(), status: "running", ownedByApp: true } : null;
   }
 }
 
@@ -99,6 +109,11 @@ class MockModelProvider implements ModelProvider {
       await sleep(28);
       onToken(token);
     }
+  }
+
+  async completeAgent(_context: ProviderContext, task: string, steps: unknown[]): Promise<AgentResponse> {
+    if (steps.length === 0) return { type: "tool_call", id: crypto.randomUUID(), tool: "list_directory", arguments: { path: "" } };
+    return { type: "final", content: `Mock agent completed: ${task}` };
   }
 }
 

@@ -38,5 +38,15 @@
     "contextLength": 65536,
     "launchProfileId": "agent",
     "description": "도구 사용과 장기 작업"
+  },
+  {
+    "id": "qwen3-ollama-agent",
+    "name": "Qwen 3 8B (Ollama)",
+    "category": "agent",
+    "runtimeId": "ollama",
+    "modelPath": "qwen3:8b",
+    "contextLength": 40960,
+    "launchProfileId": "ollama-agent",
+    "description": "Ollama의 OpenAI 호환 도구 호출 모델"
   }
 ]

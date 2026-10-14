@@ -25,7 +25,7 @@ export interface ModelInfo {
 export interface LaunchProfile {
   id: string;
   runtimeId: string;
-  command: string;
+  launch: LaunchCommand | null;
   port: number;
   healthEndpoint: string;
   apiBaseUrl: string;
@@ -35,6 +35,22 @@ export interface LaunchProfile {
   batchSize: number;
   temperature: number;
   additionalArguments: string[];
+}
+
+export interface LaunchCommand {
+  executable: string;
+  args: string[];
+}
+
+export type RuntimeStatus = "starting" | "running" | "stopped" | "crashed";
+
+export interface RuntimeInstance {
+  pid: number;
+  modelId: string;
+  port: number;
+  startedAt: string;
+  status: RuntimeStatus;
+  ownedByApp: boolean;
 }
 
 export interface AppSettings {
@@ -50,6 +66,7 @@ export interface AppSettings {
   customWakeCommand: string;
   closeBehavior: "nothing" | "stop-runtime" | "sleep-windows";
   advancedMode: boolean;
+  directApiMode: boolean;
 }
 
 export type MessageRole = "user" | "assistant" | "system";

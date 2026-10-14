@@ -2,7 +2,10 @@
   {
     "id": "balanced",
     "runtimeId": "llama-cpp",
-    "command": "C:\\llama.cpp\\llama-server.exe -m \"{modelPath}\" -c {contextSize} -ngl {gpuLayers} -t {threads} -b {batchSize} --host 0.0.0.0 --port {port}",
+    "launch": {
+      "executable": "C:\\llama.cpp\\llama-server.exe",
+      "args": ["-m", "{modelPath}", "-c", "{contextSize}", "-ngl", "{gpuLayers}", "-t", "{threads}", "-b", "{batchSize}", "--host", "127.0.0.1", "--port", "{port}"]
+    },
     "port": 8080,
     "healthEndpoint": "/health",
     "apiBaseUrl": "http://{host}:8080/v1",
@@ -16,7 +19,10 @@
   {
     "id": "large-model",
     "runtimeId": "llama-cpp",
-    "command": "C:\\llama.cpp\\llama-server.exe -m \"{modelPath}\" -c {contextSize} -ngl {gpuLayers} -t {threads} -b {batchSize} --host 0.0.0.0 --port {port}",
+    "launch": {
+      "executable": "C:\\llama.cpp\\llama-server.exe",
+      "args": ["-m", "{modelPath}", "-c", "{contextSize}", "-ngl", "{gpuLayers}", "-t", "{threads}", "-b", "{batchSize}", "--host", "127.0.0.1", "--port", "{port}"]
+    },
     "port": 8080,
     "healthEndpoint": "/health",
     "apiBaseUrl": "http://{host}:8080/v1",
@@ -30,7 +36,7 @@
   {
     "id": "agent",
     "runtimeId": "openai-compatible",
-    "command": "",
+    "launch": null,
     "port": 1234,
     "healthEndpoint": "/v1/models",
     "apiBaseUrl": "http://{host}:1234/v1",
@@ -39,6 +45,20 @@
     "threads": 8,
     "batchSize": 512,
     "temperature": 0.4,
+    "additionalArguments": []
+  },
+  {
+    "id": "ollama-agent",
+    "runtimeId": "ollama",
+    "launch": null,
+    "port": 11434,
+    "healthEndpoint": "/api/tags",
+    "apiBaseUrl": "http://{host}:11434/v1",
+    "contextSize": 40960,
+    "gpuLayers": 99,
+    "threads": 8,
+    "batchSize": 512,
+    "temperature": 0.2,
     "additionalArguments": []
   }
 ]

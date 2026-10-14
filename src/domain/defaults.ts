@@ -15,6 +15,7 @@ export const defaultSettings: AppSettings = {
   customWakeCommand: "",
   closeBehavior: "nothing",
   advancedMode: false,
+  directApiMode: false,
 };
 
 export const defaultModels = models as ModelInfo[];
