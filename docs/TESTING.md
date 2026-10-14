@@ -69,4 +69,4 @@ Windows 11 Pro 장비에 비대화형 SSH key 인증으로 연결해 다음을 �
 
 OFF/WOL/reboot는 Settings에 장비 MAC/broadcast를 입력하고 유지보수 창을 확보한 뒤 수동 체크리스트로 실행합니다. 외부 Ollama process를 임의 종료하지 않는 결과는 process ownership 요구사항에 부합합니다.
 
-macOS ARM64 환경에서 `npm test`, production build, `cargo fmt --check`, `cargo check`, `cargo test`, Mock Agent 브라우저 flow를 검증했습니다. `npm run tauri build -- --bundles app`은 17.29 MiB `Local LLM.app` 생성까지 통과했습니다. 기본 `npm run tauri build`는 `.app` 생성 후 Tauri의 `bundle_dmg.sh` 단계에서 실패하고 임시 image를 남겨 수동 detach했으므로 DMG 환경 문제는 미해결로 기록합니다. 실제 Keychain password 저장은 별도 credential 입력 시 검증합니다.
+macOS ARM64 환경에서 `npm test`, production build, `cargo fmt --check`, `cargo check`, `cargo test`, Mock Agent 브라우저 flow를 검증했습니다. `npm run tauri build -- --bundles app`은 17.29 MiB `Local LLM.app` 생성을 통과했고, Finder AppleEvent를 사용하지 않는 `CI=true npm run tauri build`는 17.29 MiB `.app`과 6.16 MiB `.dmg`를 모두 생성했습니다. 대화형 기본 DMG 명령은 이 호스트의 Finder AppleEvent 단계에서 실패할 수 있습니다. 실제 Keychain password 저장은 별도 credential 입력 시 검증합니다.
