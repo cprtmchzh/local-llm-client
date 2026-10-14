@@ -21,4 +21,21 @@ describe("ModelSelector", () => {
     await user.click(screen.getByRole("option", { name: /Qwen Coder/ }));
     expect(onSelect).toHaveBeenCalledWith("qwen-coder");
   });
+
+  it("closes the model menu with Escape", async () => {
+    const user = userEvent.setup();
+    render(
+      <ModelSelector
+        models={defaultModels}
+        selectedId="qwen-cyber-27b"
+        onSelect={vi.fn()}
+      />,
+    );
+
+    const trigger = screen.getByRole("button", { name: /Qwen Cyber 27B/ });
+    await user.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
 });

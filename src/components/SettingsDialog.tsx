@@ -1,5 +1,5 @@
 import { Eye, EyeOff, KeyRound, X } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type { AppSettings } from "../domain/types";
 
 interface SettingsDialogProps {
@@ -16,6 +16,14 @@ export function SettingsDialog({ initial, onSave, onClose }: SettingsDialogProps
   const [showPassword, setShowPassword] = useState(false);
   const [tab, setTab] = useState<Tab>("connection");
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !saving) onClose();
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [onClose, saving]);
 
   const update = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) =>
     setSettings((current) => ({ ...current, [key]: value }));
@@ -92,7 +100,7 @@ export function SettingsDialog({ initial, onSave, onClose }: SettingsDialogProps
               </>
             ) : null}
             {tab === "runtime" ? (
-              <><div className="section-copy"><h3>런타임</h3><p>모델별 명령과 API 주소는 Model Registry에서 관리됩니다.</p></div><div className="info-panel"><strong>llama.cpp · OpenAI 호환 API</strong><p>기본 포트 8080 · Health endpoint /health</p><p>모델 프로필 편집 UI는 다음 마일스톤에서 제공됩니다.</p></div></>
+              <><div className="section-copy"><h3>런타임</h3><p>모델별 명령과 API 주소는 Model Registry에서 관리됩니다.</p></div><div className="info-panel"><strong>llama.cpp · OpenAI 호환 API</strong><p>기본 연결은 임시 localhost 포트를 사용하는 SSH tunnel입니다.</p><p>모델 프로필 편집 UI는 다음 마일스톤에서 제공됩니다.</p></div><label className="toggle-row"><span><strong>Direct LAN API (Debug)</strong><small>SSH tunnel을 우회합니다. 신뢰할 수 있는 개발망에서만 사용하세요.</small></span><input type="checkbox" checked={settings.directApiMode} onChange={(event) => update("directApiMode", event.target.checked)} /></label></>
             ) : null}
             {tab === "application" ? (
               <><div className="section-copy"><h3>애플리케이션</h3><p>개발과 실제 사용 환경을 전환합니다.</p></div><label className="toggle-row"><span><strong>Mock Mode</strong><small>Windows 없이 전체 흐름을 시뮬레이션합니다.</small></span><input type="checkbox" checked={settings.mockMode} onChange={(event) => update("mockMode", event.target.checked)} /></label><label className="toggle-row"><span><strong>Advanced Mode</strong><small>상세 연결 로그를 표시합니다.</small></span><input type="checkbox" checked={settings.advancedMode} onChange={(event) => update("advancedMode", event.target.checked)} /></label><label><span>앱 종료 시</span><select value={settings.closeBehavior} onChange={(event) => update("closeBehavior", event.target.value as AppSettings["closeBehavior"])}><option value="nothing">아무 작업도 하지 않음</option><option value="stop-runtime">모델 런타임 중지</option><option value="sleep-windows">Windows 절전</option></select></label></>

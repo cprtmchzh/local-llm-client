@@ -74,7 +74,7 @@ export function useAppController() {
     });
   }, []);
 
-  const createConversation = useCallback(() => {
+  const createConversationRecord = useCallback(() => {
     const timestamp = now();
     const conversation: Conversation = {
       id: createId(),
@@ -89,6 +89,11 @@ export function useAppController() {
     setError(null);
     return conversation;
   }, [persistConversations, selectedModelId]);
+
+  const openNewConversation = useCallback(() => {
+    setActiveConversationId(null);
+    setError(null);
+  }, []);
 
   const context = useMemo<ProviderContext | null>(
     () =>
@@ -128,7 +133,7 @@ export function useAppController() {
   const sendMessage = useCallback(
     async (content: string) => {
       if (!content.trim() || !context || isStreaming) return;
-      const conversation = activeConversation ?? createConversation();
+      const conversation = activeConversation ?? createConversationRecord();
       const createdAt = now();
       const userMessage: Message = {
         id: createId(),
@@ -168,7 +173,7 @@ export function useAppController() {
         await providers.model.streamChat(
           {
             requestId: assistantMessage.id,
-            baseUrl: context.profile.apiBaseUrl.replaceAll("{host}", context.settings.host),
+            baseUrl: providers.connection.apiBaseUrl(context),
             model: context.model.modelPath,
             temperature: context.profile.temperature,
             messages: baseMessages.map(({ role, content: messageContent }) => ({
@@ -237,7 +242,7 @@ export function useAppController() {
       activeConversation,
       connectionState,
       context,
-      createConversation,
+      createConversationRecord,
       isStreaming,
       persistConversations,
       prepare,
@@ -312,12 +317,13 @@ export function useAppController() {
     error,
     isStreaming,
     selectConversation,
-    createConversation,
+    createConversation: openNewConversation,
     removeConversation,
     selectModel,
     saveSettings,
     saveModel,
     sendMessage,
     prepare,
+    context,
   };
 }
