@@ -8,6 +8,11 @@ UI는 SSH나 llama.cpp를 직접 알지 않습니다. `ConnectionOrchestrator`�
 flowchart TB
   UI[React Desktop UI] --> CTRL[Application Controller]
   CTRL --> ORCH[Connection Orchestrator]
+  CTRL --> AGENT[Agent Controller]
+  AGENT --> AORCH[Agent Orchestrator]
+  AORCH --> POLICY[Tool Policy]
+  POLICY --> TOOLS[ToolProvider]
+  TOOLS --> WS[Workspace Repository]
   ORCH --> WAKE[WakeProvider]
   ORCH --> CONN[ConnectionProvider]
   ORCH --> RUN[RuntimeProvider]
@@ -29,15 +34,18 @@ flowchart TB
 | 계층 | 책임 | 주요 위치 |
 |---|---|---|
 | Presentation | chat/sidebar/model/settings/log UI | `src/components` |
-| Application | 상태, 대화, orchestration hook | `src/hooks/useAppController.ts` |
+| Application | 대화/연결 controller와 독립 agent controller | `src/hooks/useAppController.ts`, `src/hooks/useAgentController.ts` |
 | Domain | 타입, 상태 전이, 기본 registry | `src/domain` |
 | Providers | wake/connection/runtime/model 계약과 adapter | `src/services/providers` |
-| Native | UDP WOL, SSH, Keychain, HTTP SSE | `src-tauri/src/lib.rs` |
+| Agent runtime | bounded loop, approval, normalized response, tools | `src/services/agentOrchestrator.ts`, `toolProvider.ts`, `toolPolicy.ts` |
+| Native | UDP WOL, SSH tunnel, process lifecycle, workspace FS, HTTP SSE | `src-tauri/src/lib.rs` |
 | Configuration | 모델과 launch profile | `config` |
 
 ## Data flow
 
 사용자 메시지는 먼저 대화에 durable하게 반영된 뒤 준비 흐름을 통과합니다. 모델이 준비되면 `ModelProvider.streamChat`이 token을 callback으로 전달하며 각 token이 assistant message에 누적됩니다. 완료/실패 시 `pending` 상태가 정리됩니다.
+
+Agent task는 별도 `AgentOrchestrator`가 처리합니다. Model adapter가 raw OpenAI/Qwen response를 `AgentResponse`로 정규화하고, policy가 tool request를 AUTO/ASK/DENY로 판정한 뒤에만 `ToolProvider`를 호출합니다. Workspace repository는 모든 파일 경계를 canonical root 아래로 제한합니다. `ConnectionOrchestrator`와 기존 Chat controller에는 agent loop를 합치지 않습니다.
 
 ## State machine
 

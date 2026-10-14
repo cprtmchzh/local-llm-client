@@ -8,8 +8,13 @@
 - `OFFLINE → WAKING → SSH_READY → MODEL_READY` 상태 머신과 제한된 재시도/backoff
 - Magic Packet WOL 및 절대경로 기반 Custom Wake adapter
 - SSH 개인 키/Keychain 암호 인증, 원격 명령 실행
-- llama.cpp 및 OpenAI-compatible API health check/SSE chat
-- Model Registry/Launch Profile, 대화 및 일반 설정 로컬 저장
+- SSH local port forwarding을 통한 health/SSE 접근(Direct LAN은 debug opt-in)
+- process ownership/PID 기반 runtime lifecycle과 typed executable/argv launch profile
+- llama.cpp, Ollama 및 OpenAI-compatible API health check/SSE chat
+- Workspace/recent workspace, 경계 검증, read/search/metadata/atomic patch 도구
+- AgentOrchestrator, Qwen/OpenAI tool-call adapter, budget/cancel/approval policy
+- Chat을 유지하는 Agent activity/diff/tool output UI
+- Model Registry/Launch Profile, 대화/workspace/일반 설정 로컬 저장
 - Mock Provider로 Windows 없이 wake/SSH/runtime/model/streaming 전체 과정 재현
 - 상세 로그와 사용자 복구 액션
 
@@ -34,22 +39,23 @@ npm run tauri dev
 npm test
 npm run build
 cargo check --manifest-path src-tauri/Cargo.toml
+npm run test:e2e:windows -- --target user@windows-host --model qwen3:8b
 ```
 
 ## 실제 Windows 연결
 
 1. Windows의 OpenSSH Server를 활성화하고 Mac의 공개 키를 `%USERPROFILE%\.ssh\authorized_keys`에 등록합니다.
-2. Windows Defender Firewall에서 SSH 포트와 모델 API 포트를 신뢰할 수 있는 사설망/VPN에만 허용합니다.
+2. Windows Defender Firewall에서 SSH 포트만 신뢰할 수 있는 사설망/VPN에 허용합니다. 모델 API는 Windows localhost에 바인딩합니다.
 3. BIOS/UEFI와 NIC 전원 관리에서 Wake-on-LAN을 활성화합니다.
 4. 앱 Settings에서 host, SSH port, username, private key 경로, MAC 주소와 broadcast 주소를 입력합니다.
-5. `config/models.json`의 모델 경로 및 `config/launch-profiles.json`의 llama.cpp 경로를 실제 Windows 환경에 맞춥니다.
+5. `config/models.json`의 모델 경로 및 `config/launch-profiles.json`의 typed `launch.executable`/`launch.args`를 실제 Windows 환경에 맞춥니다. 실행 중인 Ollama는 `ollama-agent` 프로필을 사용할 수 있습니다.
 6. Mock Mode를 끄고 상단의 다시 연결 버튼을 누릅니다.
 
-llama-server는 Mac에서 접근할 수 있는 인터페이스에 바인딩되어야 합니다(예: `--host 0.0.0.0`). API 포트는 인터넷에 직접 공개하지 말고 사설 LAN/VPN과 방화벽으로 제한하세요. SSH 터널은 현재 알려진 제한 사항입니다.
+llama-server/Ollama는 Windows `127.0.0.1`에만 바인딩할 수 있습니다. 앱은 임시 Mac localhost 포트를 열고 SSH tunnel을 통해 health와 streaming 요청을 전달합니다. Settings의 Direct LAN API는 디버그용 opt-in입니다.
 
 ## 모델 추가
 
-[`config/models.json`](config/models.json)에 모델을 등록하고 [`config/launch-profiles.json`](config/launch-profiles.json)의 프로필 ID를 연결합니다. 지원하는 명령 placeholder는 `{modelPath}`, `{contextSize}`, `{gpuLayers}`, `{threads}`, `{batchSize}`, `{port}`이며 API URL에는 `{host}`를 사용할 수 있습니다. 자격 증명은 이 파일에 넣지 않습니다.
+[`config/models.json`](config/models.json)에 모델을 등록하고 [`config/launch-profiles.json`](config/launch-profiles.json)의 프로필 ID를 연결합니다. launch는 `executable`과 `args[]`로 분리됩니다. 지원 placeholder는 `{modelPath}`, `{contextSize}`, `{gpuLayers}`, `{threads}`, `{batchSize}`, `{port}`이며 API URL에는 `{host}`를 사용할 수 있습니다. 자격 증명은 이 파일에 넣지 않습니다.
 
 ## 저장과 보안
 
@@ -75,8 +81,9 @@ llama-server는 Mac에서 접근할 수 있는 인터페이스에 바인딩되�
 ## 알려진 제한
 
 - macOS ARM64에서 Rust/Tauri native compile, release `.app` bundle, 설치 및 Mock E2E를 검증했습니다. 실제 Keychain 암호 저장은 실사용 credential 입력 시 별도 검증이 필요합니다.
-- 현재 모델 API는 사설망/VPN을 통해 직접 접근합니다. SSH local port forwarding은 다음 보안 우선순위입니다.
 - conversation persistence는 MVP에서 localStorage이며, SQLite migration은 다음 단계입니다.
 - model/launch profile 편집은 JSON 기반이며 앱 내 편집 UI는 아직 없습니다.
+- Agent run 영구 저장, advanced context manager, PTY, MCP와 multi-agent는 아직 구현하지 않았습니다.
+- Diff는 Accept/Revert 결정을 지원하며 revert도 사전 검사 후 reverse patch로 원자 적용합니다.
 
-다음 우선순위는 SSH 터널, SQLite persistence, runtime process identity/PID 관리, 모델 편집 UI, Windows 실기기 E2E 순입니다.
+다음 우선순위는 SQLite agent persistence, context manager, Revert history, model/profile 편집 UI입니다.
