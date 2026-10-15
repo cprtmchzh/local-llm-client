@@ -135,6 +135,7 @@ export interface ChatRequest {
   model: string;
   temperature: number;
   maxTokens: number;
+  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh";
   timeoutMs: number;
   messages: Pick<Message, "role" | "content">[];
 }

@@ -148,8 +148,23 @@ struct ChatRequest {
     model: String,
     temperature: f32,
     max_tokens: u32,
+    reasoning_effort: Option<String>,
     timeout_ms: u64,
     messages: Vec<ChatMessage>,
+}
+
+fn chat_request_payload(request: &ChatRequest, stream: bool) -> serde_json::Value {
+    let mut payload = json!({
+        "model": &request.model,
+        "temperature": request.temperature,
+        "max_tokens": request.max_tokens,
+        "messages": &request.messages,
+        "stream": stream
+    });
+    if let Some(reasoning_effort) = &request.reasoning_effort {
+        payload["reasoning_effort"] = json!(reasoning_effort);
+    }
+    payload
 }
 
 async fn model_api_error_message(response: reqwest::Response) -> String {
@@ -1541,13 +1556,7 @@ async fn stream_chat(app: AppHandle, request: ChatRequest) -> Result<(), Backend
         let client = model_http_client(request.timeout_ms)?;
         let send = client
             .post(url)
-            .json(&json!({
-                "model": request.model,
-                "temperature": request.temperature,
-                "max_tokens": request.max_tokens,
-                "messages": request.messages,
-                "stream": true
-            }))
+            .json(&chat_request_payload(&request, true))
             .send();
         let cancelled = wait_until_cancelled(flag.clone());
         pin_mut!(send, cancelled);
@@ -1627,13 +1636,7 @@ async fn complete_chat(request: ChatRequest) -> Result<String, BackendError> {
         let client = model_http_client(request.timeout_ms)?;
         let send = client
             .post(url)
-            .json(&json!({
-                "model": request.model,
-                "temperature": request.temperature,
-                "max_tokens": request.max_tokens,
-                "messages": request.messages,
-                "stream": false
-            }))
+            .json(&chat_request_payload(&request, false))
             .send();
         let cancelled = wait_until_cancelled(flag.clone());
         pin_mut!(send, cancelled);
@@ -2023,5 +2026,35 @@ mod tests {
             Some("analysis")
         );
         assert!(chat_completion_text(&json!({"choices": [{"message": {}}]})).is_none());
+    }
+
+    #[test]
+    fn adds_reasoning_effort_only_for_visible_output_requests() {
+        let request = ChatRequest {
+            request_id: "request:visible".into(),
+            base_url: "http://127.0.0.1:11434/v1".into(),
+            model: "model".into(),
+            temperature: 0.2,
+            max_tokens: 512,
+            reasoning_effort: Some("none".into()),
+            timeout_ms: 0,
+            messages: vec![ChatMessage {
+                role: "user".into(),
+                content: "answer".into(),
+            }],
+        };
+
+        let visible = chat_request_payload(&request, true);
+        assert_eq!(visible["reasoning_effort"], "none");
+        assert_eq!(visible["stream"], true);
+
+        let regular = chat_request_payload(
+            &ChatRequest {
+                reasoning_effort: None,
+                ..request
+            },
+            false,
+        );
+        assert!(regular.get("reasoning_effort").is_none());
     }
 }

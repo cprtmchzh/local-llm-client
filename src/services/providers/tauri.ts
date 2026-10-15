@@ -169,16 +169,21 @@ class TauriRuntimeProvider implements RuntimeProvider {
 class TauriModelProvider implements ModelProvider {
   constructor(private readonly connection: TauriConnectionProvider) {}
 
-  private visibleOutputRequest(request: ChatRequest, reasoning: string): ChatRequest {
+  private visibleOutputRequest(request: ChatRequest): ChatRequest {
     const messages = [...request.messages];
-    const summarizedReasoning = reasoning.slice(-2_000);
-    const instruction = `The previous pass completed its internal analysis but did not produce a visible answer. Use that analysis to write only the polished final conclusion. Do not reveal or quote the step-by-step reasoning.\n\nINTERNAL ANALYSIS:\n${summarizedReasoning}`;
+    const instruction = "The analysis is complete. Write only the polished final answer now. Do not include hidden reasoning or an analysis preamble.";
     if (messages[0]?.role === "system") {
       messages[0] = { ...messages[0], content: `${messages[0].content}\n\n${instruction}` };
     } else {
       messages.unshift({ role: "system", content: instruction });
     }
-    return { ...request, requestId: `${request.requestId}:visible`, messages };
+    return {
+      ...request,
+      requestId: `${request.requestId}:visible`,
+      maxTokens: Math.min(request.maxTokens, 1_024),
+      reasoningEffort: "none",
+      messages,
+    };
   }
 
   async isHealthy(context: ProviderContext): Promise<boolean> {
@@ -187,14 +192,13 @@ class TauriModelProvider implements ModelProvider {
 
   async streamChat(request: ChatRequest, onToken: (token: string) => void, signal?: AbortSignal): Promise<void> {
     let visibleContent = "";
-    let reasoning = "";
     const emitVisible = (token: string) => {
       visibleContent += token;
       onToken(token);
     };
-    await this.streamChatOnce(request, emitVisible, (token) => { reasoning += token; }, signal);
+    await this.streamChatOnce(request, emitVisible, () => undefined, signal);
     if (visibleContent.trim()) return;
-    await this.streamChatOnce(this.visibleOutputRequest(request, reasoning), emitVisible, () => undefined, signal);
+    await this.streamChatOnce(this.visibleOutputRequest(request), emitVisible, () => undefined, signal);
     if (!visibleContent.trim()) throw new Error("model response did not contain visible content");
   }
 
