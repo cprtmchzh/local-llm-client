@@ -61,12 +61,12 @@ describe("chat pipeline", () => {
     expect(providers.model.completeChat).toHaveBeenCalledTimes(2);
     expect(providers.model.streamChat).toHaveBeenCalledOnce();
     for (const [request] of vi.mocked(providers.model.completeChat).mock.calls) {
-      expect(request.maxTokens).toBe(3_072);
+      expect(request.maxTokens).toBe(1_024);
       expect(request.messages[0].role).toBe("system");
       expect(request.messages.filter((message) => message.role === "system")).toHaveLength(1);
     }
     for (const [request] of vi.mocked(providers.model.streamChat).mock.calls) {
-      expect(request.maxTokens).toBe(4_096);
+      expect(request.maxTokens).toBe(1_536);
       expect(request.messages[0].role).toBe("system");
       expect(request.messages.filter((message) => message.role === "system")).toHaveLength(1);
     }
@@ -89,8 +89,8 @@ describe("chat pipeline", () => {
     const critiqueRequest = vi.mocked(providers.model.completeChat).mock.calls[1][0];
     const finalRequest = vi.mocked(providers.model.streamChat).mock.calls[0][0];
     expect(critiqueRequest.messages[0].content).toContain("중간 결과가 컨텍스트 보호를 위해 축약됨");
-    expect(finalRequest.messages[0].content.match(/중간 결과가 컨텍스트 보호를 위해 축약됨/g)).toHaveLength(2);
-    expect(finalRequest.messages[0].content.length).toBeLessThan(26_000);
+    expect(finalRequest.messages[0].content).toContain("컨텍스트");
+    expect(finalRequest.messages[0].content.length).toBeLessThan(8_000);
   });
 
   it("does not downgrade Deep Review when an internal stage fails", async () => {

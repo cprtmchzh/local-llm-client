@@ -18,9 +18,10 @@ const reasoningFallbackOrder: Record<ReasoningMode, ReasoningMode[]> = {
   "deep-review": ["deep", "normal", "fast"],
 };
 
-const INTERNAL_STAGE_MAX_TOKENS = 3_072;
-const FINAL_STAGE_MAX_TOKENS = 4_096;
-const MAX_INTERMEDIATE_TEXT_CHARS = 12_000;
+const INTERNAL_STAGE_MAX_TOKENS = 1_024;
+const FINAL_STAGE_MAX_TOKENS = 1_536;
+const MAX_INTERMEDIATE_TEXT_CHARS = 1_400;
+const CONTEXT_SAFETY_TOKENS = 256;
 
 export interface ChatPipelineOptions {
   providers: ProviderBundle;
@@ -171,6 +172,8 @@ function requestFor(
   messages: Pick<Message, "role" | "content">[],
   maxTokens: number,
 ): ChatRequest {
+  const contextTokens = Math.min(options.context.model.contextLength, options.context.profile.contextSize);
+  const inputBudget = Math.max(512, contextTokens - maxTokens - CONTEXT_SAFETY_TOKENS);
   return {
     requestId: `${options.requestId}:${suffix}`,
     baseUrl: options.providers.connection.apiBaseUrl(options.context),
@@ -178,8 +181,65 @@ function requestFor(
     temperature: options.context.profile.temperature,
     maxTokens,
     timeoutMs: options.context.settings.modelTimeoutMs,
-    messages,
+    messages: fitMessagesToTokenBudget(messages, inputBudget),
   };
+}
+
+function estimateTextTokens(value: string): number {
+  let units = 0;
+  for (const character of value) units += character.charCodeAt(0) <= 0x7f ? 0.3 : 1;
+  return Math.ceil(units);
+}
+
+function truncateToTokenBudget(value: string, tokenBudget: number): string {
+  if (estimateTextTokens(value) <= tokenBudget) return value;
+  const marker = "\n\n[이전 컨텍스트가 모델 한도에 맞게 축약됨]\n\n";
+  let low = 0;
+  let high = value.length;
+  while (low < high) {
+    const length = Math.ceil((low + high) / 2);
+    const head = Math.ceil(length / 2);
+    const tail = length - head;
+    const candidate = `${value.slice(0, head)}${marker}${tail > 0 ? value.slice(-tail) : ""}`;
+    if (estimateTextTokens(candidate) <= tokenBudget) low = length;
+    else high = length - 1;
+  }
+  const head = Math.ceil(low / 2);
+  const tail = low - head;
+  return `${value.slice(0, head)}${marker}${tail > 0 ? value.slice(-tail) : ""}`;
+}
+
+function fitMessagesToTokenBudget(
+  messages: Pick<Message, "role" | "content">[],
+  tokenBudget: number,
+): Pick<Message, "role" | "content">[] {
+  const first = messages[0];
+  const system = first?.role === "system" ? first : undefined;
+  const history = system ? messages.slice(1) : messages;
+  const fitted: Pick<Message, "role" | "content">[] = [];
+  let remaining = tokenBudget;
+
+  if (system) {
+    const systemBudget = Math.max(256, Math.floor(tokenBudget * 0.7));
+    const content = truncateToTokenBudget(system.content, systemBudget);
+    fitted.push({ ...system, content });
+    remaining -= estimateTextTokens(content) + 8;
+  }
+
+  const recent: Pick<Message, "role" | "content">[] = [];
+  for (let index = history.length - 1; index >= 0 && remaining > 32; index -= 1) {
+    const message = history[index];
+    const cost = estimateTextTokens(message.content) + 8;
+    if (cost <= remaining) {
+      recent.unshift(message);
+      remaining -= cost;
+      continue;
+    }
+    const content = truncateToTokenBudget(message.content, Math.max(24, remaining - 8));
+    recent.unshift({ ...message, content });
+    break;
+  }
+  return [...fitted, ...recent];
 }
 
 function compactIntermediateText(value: string): string {

@@ -171,7 +171,7 @@ class TauriModelProvider implements ModelProvider {
 
   private visibleOutputRequest(request: ChatRequest, reasoning: string): ChatRequest {
     const messages = [...request.messages];
-    const summarizedReasoning = reasoning.slice(-32_000);
+    const summarizedReasoning = reasoning.slice(-2_000);
     const instruction = `The previous pass completed its internal analysis but did not produce a visible answer. Use that analysis to write only the polished final conclusion. Do not reveal or quote the step-by-step reasoning.\n\nINTERNAL ANALYSIS:\n${summarizedReasoning}`;
     if (messages[0]?.role === "system") {
       messages[0] = { ...messages[0], content: `${messages[0].content}\n\n${instruction}` };

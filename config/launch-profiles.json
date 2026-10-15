@@ -57,7 +57,7 @@
     "port": 11434,
     "healthEndpoint": "/api/tags",
     "apiBaseUrl": "http://{host}:11434/v1",
-    "contextSize": 40960,
+    "contextSize": 4096,
     "gpuLayers": 99,
     "threads": 8,
     "batchSize": 512,

@@ -27,7 +27,7 @@
     "category": "agent",
     "runtimeId": "ollama",
     "modelPath": "hf.co/0xSojalSec/Qwen3.8-27B-Uncensored-Cyber-agent:IQ4_XS-imatrix-fromq8",
-    "contextLength": 40960,
+    "contextLength": 4096,
     "launchProfileId": "ollama-agent",
     "description": "Windows Ollama의 Cyber Agent 모델",
     "capabilities": { "reasoningModes": ["fast", "normal", "deep", "deep-review"] }
