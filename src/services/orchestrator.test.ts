@@ -31,8 +31,10 @@ function fixture(): { providers: ProviderBundle; context: ProviderContext } {
     model: {
       isHealthy: vi.fn(async () => runtime),
       streamChat: vi.fn(async () => undefined),
+      completeChat: vi.fn(async () => "done"),
       completeAgent: vi.fn(async () => ({ type: "final" as const, content: "done" })),
     },
+    search: { search: vi.fn(async () => []) },
   };
   return { providers, context };
 }

@@ -10,8 +10,11 @@ import {
   type Message,
   type ModelInfo,
   type ProviderContext,
+  type ReasoningMode,
+  type SearchMode,
 } from "../domain/types";
 import { createId } from "../lib/utils";
+import { runChatPipeline } from "../services/chatPipeline";
 import { ConnectionOrchestrator } from "../services/orchestrator";
 import { getProviders } from "../services/providers";
 import { appStorage } from "../services/storage";
@@ -38,6 +41,7 @@ export function useAppController() {
   const [error, setError] = useState<AppError | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const preparedContextRef = useRef<ProviderContext | null>(null);
+  const chatAbortRef = useRef<AbortController | null>(null);
 
   const activeConversation = useMemo(
     () => conversations.find((item) => item.id === activeConversationId) ?? null,
@@ -171,21 +175,20 @@ export function useAppController() {
 
       setIsStreaming(true);
       setError(null);
+      const controller = new AbortController();
+      chatAbortRef.current = controller;
       try {
         if (connectionState !== "model_ready") await prepare();
         const providers = getProviders(settings);
-        await providers.model.streamChat(
-          {
-            requestId: assistantMessage.id,
-            baseUrl: providers.connection.apiBaseUrl(context),
-            model: context.model.modelPath,
-            temperature: context.profile.temperature,
-            messages: baseMessages.map(({ role, content: messageContent }) => ({
-              role,
-              content: messageContent,
-            })),
-          },
-          (token) =>
+        await runChatPipeline({
+          providers,
+          context,
+          requestId: assistantMessage.id,
+          messages: baseMessages.map(({ role, content: messageContent }) => ({ role, content: messageContent })),
+          searchMode: settings.searchMode,
+          reasoningMode: settings.reasoningMode,
+          signal: controller.signal,
+          onToken: (token) =>
             persistConversations((items) =>
               items.map((item) =>
                 item.id === conversation.id
@@ -201,14 +204,30 @@ export function useAppController() {
                   : item,
               ),
             ),
-        );
+          onStage: (stage) =>
+            persistConversations((items) => items.map((item) => item.id === conversation.id ? {
+              ...item,
+              messages: item.messages.map((message) =>
+                message.id === assistantMessage.id ? { ...message, stage } : message,
+              ),
+            } : item)),
+          onMetadata: (metadata) =>
+            persistConversations((items) => items.map((item) => item.id === conversation.id ? {
+              ...item,
+              messages: item.messages.map((message) =>
+                message.id === assistantMessage.id ? { ...message, ...metadata } : message,
+              ),
+            } : item)),
+        });
         persistConversations((items) =>
           items.map((item) =>
             item.id === conversation.id
               ? {
                   ...item,
                   messages: item.messages.map((message) =>
-                    message.id === assistantMessage.id ? { ...message, pending: false } : message,
+                    message.id === assistantMessage.id
+                      ? { ...message, pending: false, stage: undefined }
+                      : message,
                   ),
                 }
               : item,
@@ -223,7 +242,7 @@ export function useAppController() {
                 "STREAM_INTERRUPTED",
                 "연결을 확인하고 메시지를 다시 보내세요.",
               );
-        setError(appError);
+        if (appError.code !== "REQUEST_CANCELLED") setError(appError);
         persistConversations((items) =>
           items.map((item) =>
             item.id === conversation.id
@@ -231,7 +250,14 @@ export function useAppController() {
                   ...item,
                   messages: item.messages.map((message) =>
                     message.id === assistantMessage.id
-                      ? { ...message, pending: false, content: message.content || "응답을 받지 못했습니다." }
+                      ? {
+                          ...message,
+                          pending: false,
+                          stage: undefined,
+                          content: message.content || (appError.code === "REQUEST_CANCELLED"
+                            ? "응답 생성을 취소했습니다."
+                            : "응답을 받지 못했습니다."),
+                        }
                       : message,
                   ),
                 }
@@ -239,6 +265,7 @@ export function useAppController() {
           ),
         );
       } finally {
+        if (chatAbortRef.current === controller) chatAbortRef.current = null;
         setIsStreaming(false);
       }
     },
@@ -254,6 +281,26 @@ export function useAppController() {
       settings,
     ],
   );
+
+  const cancelStreaming = useCallback(() => {
+    chatAbortRef.current?.abort();
+  }, []);
+
+  const setSearchMode = useCallback((searchMode: SearchMode) => {
+    setSettingsState((current) => {
+      const next = { ...current, searchMode };
+      appStorage.saveSettings(next);
+      return next;
+    });
+  }, []);
+
+  const setReasoningMode = useCallback((reasoningMode: ReasoningMode) => {
+    setSettingsState((current) => {
+      const next = { ...current, reasoningMode };
+      appStorage.saveSettings(next);
+      return next;
+    });
+  }, []);
 
   const selectModel = useCallback(
     async (modelId: string) => {
@@ -327,6 +374,9 @@ export function useAppController() {
     saveSettings,
     saveModel,
     sendMessage,
+    cancelStreaming,
+    setSearchMode,
+    setReasoningMode,
     prepare,
     context,
   };

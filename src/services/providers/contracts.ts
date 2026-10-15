@@ -1,6 +1,6 @@
 import type { AgentResponse } from "../../domain/agent";
 import type { ShellResult } from "../../domain/tools";
-import type { ChatRequest, ProviderContext, RuntimeInstance } from "../../domain/types";
+import type { ChatRequest, Citation, ProviderContext, RuntimeInstance } from "../../domain/types";
 
 export interface WakeProvider {
   wake(context: ProviderContext): Promise<void>;
@@ -24,8 +24,20 @@ export interface RuntimeProvider {
 
 export interface ModelProvider {
   isHealthy(context: ProviderContext): Promise<boolean>;
-  streamChat(request: ChatRequest, onToken: (token: string) => void): Promise<void>;
+  streamChat(request: ChatRequest, onToken: (token: string) => void, signal?: AbortSignal): Promise<void>;
+  completeChat(request: ChatRequest, signal?: AbortSignal): Promise<string>;
   completeAgent(context: ProviderContext, task: string, steps: unknown[], tools: unknown[]): Promise<AgentResponse>;
+}
+
+export interface SearchRequest {
+  requestId: string;
+  query: string;
+  maxResults: number;
+  timeoutMs: number;
+}
+
+export interface SearchProvider {
+  search(request: SearchRequest, signal?: AbortSignal): Promise<Citation[]>;
 }
 
 export interface ProviderBundle {
@@ -33,4 +45,5 @@ export interface ProviderBundle {
   connection: ConnectionProvider;
   runtime: RuntimeProvider;
   model: ModelProvider;
+  search: SearchProvider;
 }

@@ -16,7 +16,7 @@ tauri-build = { version = "2", features = [] }
 base64 = "0.22"
 dirs = "6"
 futures-util = "0.3"
-keyring = { version = "3", features = ["apple-native"] }
+keyring = { version = "3", features = ["apple-native", "windows-native"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -7,7 +7,8 @@
     "modelPath": "C:\\models\\qwen-general.gguf",
     "contextLength": 32768,
     "launchProfileId": "balanced",
-    "description": "일상적인 질문과 문서 작업"
+    "description": "일상적인 질문과 문서 작업",
+    "capabilities": { "reasoningModes": ["fast", "normal", "deep"] }
   },
   {
     "id": "qwen-coder",
@@ -17,7 +18,8 @@
     "modelPath": "C:\\models\\qwen-coder.gguf",
     "contextLength": 32768,
     "launchProfileId": "balanced",
-    "description": "코드 작성, 리뷰 및 디버깅"
+    "description": "코드 작성, 리뷰 및 디버깅",
+    "capabilities": { "reasoningModes": ["fast", "normal", "deep", "deep-review"] }
   },
   {
     "id": "qwen-cyber-27b",
@@ -27,7 +29,8 @@
     "modelPath": "hf.co/0xSojalSec/Qwen3.8-27B-Uncensored-Cyber-agent:IQ4_XS-imatrix-fromq8",
     "contextLength": 40960,
     "launchProfileId": "ollama-agent",
-    "description": "Windows Ollama의 Cyber Agent 모델"
+    "description": "Windows Ollama의 Cyber Agent 모델",
+    "capabilities": { "reasoningModes": ["fast", "normal", "deep", "deep-review"] }
   },
   {
     "id": "agent-model",
@@ -37,6 +40,7 @@
     "modelPath": "agent-model",
     "contextLength": 65536,
     "launchProfileId": "agent",
-    "description": "도구 사용과 장기 작업"
+    "description": "도구 사용과 장기 작업",
+    "capabilities": { "reasoningModes": ["normal", "deep", "deep-review"] }
   }
 ]

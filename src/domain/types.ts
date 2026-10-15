@@ -11,6 +11,14 @@ export type ConnectionState =
 
 export type ModelCategory = "general" | "coding" | "security" | "agent";
 
+export type SearchMode = "off" | "auto" | "on";
+export type ReasoningMode = "fast" | "normal" | "deep" | "deep-review";
+export type ChatStage = "searching" | "drafting" | "critiquing" | "revising" | "answering";
+
+export interface ModelCapabilities {
+  reasoningModes: ReasoningMode[];
+}
+
 export interface ModelInfo {
   id: string;
   name: string;
@@ -20,6 +28,7 @@ export interface ModelInfo {
   contextLength: number;
   launchProfileId: string;
   description: string;
+  capabilities?: ModelCapabilities;
 }
 
 export interface LaunchProfile {
@@ -67,6 +76,12 @@ export interface AppSettings {
   closeBehavior: "nothing" | "stop-runtime" | "sleep-windows";
   advancedMode: boolean;
   directApiMode: boolean;
+  searchMode: SearchMode;
+  reasoningMode: ReasoningMode;
+  searchProvider: "tavily";
+  searchMaxResults: number;
+  searchTimeoutMs: number;
+  modelTimeoutMs: number;
 }
 
 export type MessageRole = "user" | "assistant" | "system";
@@ -78,6 +93,22 @@ export interface Message {
   content: string;
   createdAt: string;
   pending?: boolean;
+  stage?: ChatStage;
+  citations?: Citation[];
+  warnings?: string[];
+  reasoning?: {
+    requested: ReasoningMode;
+    resolved: ReasoningMode;
+    fallback?: string;
+  };
+}
+
+export interface Citation {
+  id: number;
+  title: string;
+  url: string;
+  snippet: string;
+  source?: string;
 }
 
 export interface Conversation {
@@ -101,6 +132,7 @@ export interface ChatRequest {
   baseUrl: string;
   model: string;
   temperature: number;
+  timeoutMs: number;
   messages: Pick<Message, "role" | "content">[];
 }
 
@@ -122,6 +154,9 @@ export class AppError extends Error {
       | "STREAM_INTERRUPTED"
       | "NETWORK_DISCONNECTED"
       | "INVALID_CONFIGURATION"
+      | "REQUEST_TIMEOUT"
+      | "REQUEST_CANCELLED"
+      | "SEARCH_FAILED"
       | "UNKNOWN",
     readonly recovery: string,
   ) {

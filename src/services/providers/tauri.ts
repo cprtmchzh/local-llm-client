@@ -3,9 +3,31 @@ import { listen } from "@tauri-apps/api/event";
 import type { AgentResponse } from "../../domain/agent";
 import { renderLaunchCommand } from "../../domain/launchCommand";
 import type { ShellResult } from "../../domain/tools";
-import type { ChatRequest, ProviderContext, RuntimeInstance } from "../../domain/types";
+import type { ChatRequest, Citation, ProviderContext, RuntimeInstance } from "../../domain/types";
 import { normalizeOpenAiAgentResponse, qwenToolsPrompt } from "../modelAdapter";
-import type { ConnectionProvider, ModelProvider, ProviderBundle, RuntimeProvider, WakeProvider } from "./contracts";
+import type { ConnectionProvider, ModelProvider, ProviderBundle, RuntimeProvider, SearchProvider, SearchRequest, WakeProvider } from "./contracts";
+
+function cancelled(): DOMException {
+  return new DOMException("Cancelled", "AbortError");
+}
+
+function invokeWithCancellation<T>(
+  command: string,
+  args: Record<string, unknown>,
+  signal: AbortSignal | undefined,
+  cancelCommand: string,
+  requestId: string,
+): Promise<T> {
+  if (signal?.aborted) return Promise.reject(cancelled());
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => {
+      void invoke(cancelCommand, { requestId }).catch(() => undefined);
+      reject(cancelled());
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    invoke<T>(command, args).then(resolve, reject).finally(() => signal?.removeEventListener("abort", abort));
+  });
+}
 
 function connectionArgs(context: ProviderContext) {
   return { host: context.settings.host, port: context.settings.sshPort, username: context.settings.username, authentication: context.settings.authentication, privateKeyPath: context.settings.privateKeyPath };
@@ -104,22 +126,46 @@ class TauriModelProvider implements ModelProvider {
     return invoke<boolean>("check_http_health", { url: `${this.connection.apiBaseUrl(context).replace(/\/v1$/, "")}${context.profile.healthEndpoint}`, timeoutMs: 2_000 });
   }
 
-  async streamChat(request: ChatRequest, onToken: (token: string) => void): Promise<void> {
+  async streamChat(request: ChatRequest, onToken: (token: string) => void, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw cancelled();
     const tokenEvent = `chat://token/${request.requestId}`;
     const doneEvent = `chat://done/${request.requestId}`;
     const errorEvent = `chat://error/${request.requestId}`;
     await new Promise<void>((resolve, reject) => {
       const cleanups: Array<() => void> = [];
       const cleanup = () => cleanups.splice(0).forEach((dispose) => dispose());
+      let invoked = false;
+      const abort = () => {
+        if (invoked) void invoke("cancel_chat", { requestId: request.requestId }).catch(() => undefined);
+        cleanup();
+        reject(cancelled());
+      };
+      signal?.addEventListener("abort", abort, { once: true });
+      cleanups.push(() => signal?.removeEventListener("abort", abort));
       Promise.all([
         listen<string>(tokenEvent, (event) => onToken(event.payload)),
         listen(doneEvent, () => { cleanup(); resolve(); }),
         listen<string>(errorEvent, (event) => { cleanup(); reject(new Error(event.payload)); }),
       ]).then((unlisteners) => {
         cleanups.push(...unlisteners);
+        if (signal?.aborted) {
+          cleanup();
+          return;
+        }
+        invoked = true;
         return invoke("stream_chat", { request });
       }).catch((error: unknown) => { cleanup(); reject(error instanceof Error ? error : new Error(String(error))); });
     });
+  }
+
+  async completeChat(request: ChatRequest, signal?: AbortSignal): Promise<string> {
+    return invokeWithCancellation<string>(
+      "complete_chat",
+      { request },
+      signal,
+      "cancel_chat",
+      request.requestId,
+    );
   }
 
   async completeAgent(context: ProviderContext, task: string, steps: unknown[], tools: unknown[]): Promise<AgentResponse> {
@@ -129,7 +175,25 @@ class TauriModelProvider implements ModelProvider {
   }
 }
 
+class TauriSearchProvider implements SearchProvider {
+  async search(request: SearchRequest, signal?: AbortSignal): Promise<Citation[]> {
+    return invokeWithCancellation<Citation[]>(
+      "search_web",
+      { request },
+      signal,
+      "cancel_search",
+      request.requestId,
+    );
+  }
+}
+
 export function createTauriProviders(): ProviderBundle {
   const connection = new TauriConnectionProvider();
-  return { wake: new TauriWakeProvider(), connection, runtime: new TauriRuntimeProvider(connection), model: new TauriModelProvider(connection) };
+  return {
+    wake: new TauriWakeProvider(),
+    connection,
+    runtime: new TauriRuntimeProvider(connection),
+    model: new TauriModelProvider(connection),
+    search: new TauriSearchProvider(),
+  };
 }

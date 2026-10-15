@@ -2,7 +2,7 @@
 
 ## Trust boundaries
 
-React WebView는 일반 설정과 UI 상태만 다룹니다. 네트워크, SSH, OS credential은 Tauri IPC 뒤의 Rust backend가 담당합니다. SSH 암호는 macOS Keychain에 저장되고 React state에는 입력 직후 이후 유지하지 않습니다.
+React WebView는 일반 설정과 UI 상태만 다룹니다. 모델/검색 네트워크, SSH, OS credential은 Tauri IPC 뒤의 Rust backend가 담당합니다. SSH 암호와 검색 API 키는 OS credential store에 저장되고 React state에는 설정 입력 중에만 존재합니다.
 
 ## 적용된 통제
 
@@ -11,6 +11,8 @@ React WebView는 일반 설정과 UI 상태만 다룹니다. 네트워크, SSH, 
 - custom wake는 shell을 사용하지 않고 절대경로 executable + parsed argv만 허용
 - TCP/HTTP/SSH timeout 및 bounded retry
 - CSP로 WebView outbound request 차단; backend만 모델 API 접근
+- 검색 endpoint를 Rust의 Tavily HTTPS endpoint로 고정하고 결과 URL을 HTTP(S)로 제한
+- chat/search request ID별 native cancellation flag와 bounded timeout
 - `.env`, private key, DB, build artifact git 제외
 - remote command 최대 길이 제한, 기술 로그에서 secret 제외
 - 모델 API는 임시 `127.0.0.1` 포트에서 SSH local forwarding을 기본 사용

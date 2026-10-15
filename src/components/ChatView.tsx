@@ -1,6 +1,6 @@
 import { ArrowRight, Code2, ShieldCheck, Zap } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
-import type { AppError, Conversation, ModelInfo } from "../domain/types";
+import type { AppError, Conversation, ModelInfo, ReasoningMode, SearchMode } from "../domain/types";
 import { AppIcon } from "./AppIcon";
 import { Composer } from "./Composer";
 import { MessageBubble } from "./MessageBubble";
@@ -11,7 +11,12 @@ interface ChatViewProps {
   error: AppError | null;
   isStreaming: boolean;
   modelControl: ReactNode;
+  searchMode: SearchMode;
+  reasoningMode: ReasoningMode;
   onSend: (content: string) => void;
+  onCancel: () => void;
+  onSearchModeChange: (mode: SearchMode) => void;
+  onReasoningModeChange: (mode: ReasoningMode) => void;
   onRetry: () => void;
   onOpenSettings: () => void;
 }
@@ -28,7 +33,12 @@ export function ChatView({
   error,
   isStreaming,
   modelControl,
+  searchMode,
+  reasoningMode,
   onSend,
+  onCancel,
+  onSearchModeChange,
+  onReasoningModeChange,
   onRetry,
   onOpenSettings,
 }: ChatViewProps) {
@@ -87,7 +97,12 @@ export function ChatView({
         disabled={isStreaming}
         isStreaming={isStreaming}
         modelControl={modelControl}
+        searchMode={searchMode}
+        reasoningMode={reasoningMode}
         onSend={onSend}
+        onCancel={onCancel}
+        onSearchModeChange={onSearchModeChange}
+        onReasoningModeChange={onReasoningModeChange}
       />
     </main>
   );

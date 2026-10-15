@@ -1,5 +1,8 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use futures_util::StreamExt;
+use futures_util::{
+    future::{select, Either},
+    pin_mut, StreamExt,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use ssh2::Session;
@@ -21,11 +24,14 @@ use thiserror::Error;
 
 const SSH_PASSWORD_SERVICE: &str = "local-llm-client.ssh";
 const SSH_KEY_SERVICE: &str = "local-llm-client.ssh-key";
+const TAVILY_SEARCH_SERVICE: &str = "local-llm-client.search.tavily";
 const MAX_TOOL_OUTPUT: usize = 1024 * 1024;
 const MAX_AGENT_STEP_CONTEXT: usize = 128 * 1024;
 static TUNNELS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
 static SYSTEM_SSH_TUNNELS: OnceLock<Mutex<HashMap<String, Child>>> = OnceLock::new();
 static RUNTIMES: OnceLock<Mutex<HashMap<String, RuntimeInstance>>> = OnceLock::new();
+static CHAT_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+static SEARCH_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Error)]
@@ -140,7 +146,39 @@ struct ChatRequest {
     base_url: String,
     model: String,
     temperature: f32,
+    timeout_ms: u64,
     messages: Vec<ChatMessage>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchRequest {
+    request_id: String,
+    query: String,
+    max_results: usize,
+    timeout_ms: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WebSearchResult {
+    id: usize,
+    title: String,
+    url: String,
+    snippet: String,
+    source: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TavilyResponse {
+    results: Vec<TavilyResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TavilyResult {
+    title: String,
+    url: String,
+    content: String,
 }
 
 fn resolve_address(host: &str, port: u16) -> Result<SocketAddr, BackendError> {
@@ -904,7 +942,10 @@ async fn stop_remote_runtime(
 
 #[tauri::command]
 fn store_credential(service: String, account: String, secret: String) -> Result<(), BackendError> {
-    if !matches!(service.as_str(), SSH_PASSWORD_SERVICE | SSH_KEY_SERVICE) {
+    if !matches!(
+        service.as_str(),
+        SSH_PASSWORD_SERVICE | SSH_KEY_SERVICE | TAVILY_SEARCH_SERVICE
+    ) {
         return Err(BackendError::Configuration(
             "credential service is not allowed".into(),
         ));
@@ -1370,6 +1411,48 @@ async fn check_http_health(url: String, timeout_ms: u64) -> Result<bool, Backend
         .unwrap_or(false))
 }
 
+fn cancellation_flag(
+    registry: &'static OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    request_id: &str,
+) -> Result<Arc<AtomicBool>, BackendError> {
+    let mut requests = registry
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| BackendError::Command("cancellation registry is unavailable".into()))?;
+    Ok(requests
+        .entry(request_id.to_string())
+        .or_insert_with(|| Arc::new(AtomicBool::new(false)))
+        .clone())
+}
+
+fn clear_cancellation(
+    registry: &'static OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    request_id: &str,
+) {
+    if let Ok(mut requests) = registry.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+        requests.remove(request_id);
+    }
+}
+
+fn cancel_request(
+    registry: &'static OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>>,
+    request_id: String,
+) -> Result<(), BackendError> {
+    cancellation_flag(registry, &request_id)?.store(true, Ordering::SeqCst);
+    Ok(())
+}
+
+async fn wait_until_cancelled(flag: Arc<AtomicBool>) {
+    while !flag.load(Ordering::SeqCst) {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+#[tauri::command]
+fn cancel_chat(request_id: String) -> Result<(), BackendError> {
+    cancel_request(&CHAT_CANCELLATIONS, request_id)
+}
+
 #[tauri::command]
 async fn stream_chat(app: AppHandle, request: ChatRequest) -> Result<(), BackendError> {
     if !request.base_url.starts_with("http://") && !request.base_url.starts_with("https://") {
@@ -1378,60 +1461,225 @@ async fn stream_chat(app: AppHandle, request: ChatRequest) -> Result<(), Backend
         ));
     }
 
-    let token_event = format!("chat://token/{}", request.request_id);
-    let done_event = format!("chat://done/{}", request.request_id);
-    let error_event = format!("chat://error/{}", request.request_id);
-    let url = format!(
-        "{}/chat/completions",
-        request.base_url.trim_end_matches('/')
-    );
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(8))
-        .build()
-        .map_err(|error| BackendError::ModelApi(error.to_string()))?;
-    let response = client
-        .post(url)
-        .json(&json!({
-            "model": request.model,
-            "temperature": request.temperature,
-            "messages": request.messages,
-            "stream": true
-        }))
-        .send()
-        .await
-        .map_err(|error| BackendError::ModelApi(error.to_string()))?;
-
-    if !response.status().is_success() {
-        let message = format!("model API returned {}", response.status());
-        app.emit(&error_event, &message).ok();
-        return Err(BackendError::ModelApi(message));
-    }
-
-    let mut stream = response.bytes_stream();
-    let mut buffer = String::new();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| BackendError::ModelApi(error.to_string()))?;
-        buffer.push_str(&String::from_utf8_lossy(&chunk));
-        while let Some(newline) = buffer.find('\n') {
-            let line = buffer[..newline].trim().to_string();
-            buffer.drain(..=newline);
-            let Some(data) = line.strip_prefix("data:").map(str::trim) else {
-                continue;
-            };
-            if data == "[DONE]" {
-                app.emit(&done_event, ()).ok();
-                return Ok(());
+    let request_id = request.request_id.clone();
+    let flag = cancellation_flag(&CHAT_CANCELLATIONS, &request_id)?;
+    let result = async {
+        let token_event = format!("chat://token/{}", request.request_id);
+        let done_event = format!("chat://done/{}", request.request_id);
+        let error_event = format!("chat://error/{}", request.request_id);
+        let url = format!(
+            "{}/chat/completions",
+            request.base_url.trim_end_matches('/')
+        );
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(8))
+            .timeout(Duration::from_millis(
+                request.timeout_ms.clamp(1_000, 600_000),
+            ))
+            .build()
+            .map_err(|error| BackendError::ModelApi(error.to_string()))?;
+        let send = client
+            .post(url)
+            .json(&json!({
+                "model": request.model,
+                "temperature": request.temperature,
+                "messages": request.messages,
+                "stream": true
+            }))
+            .send();
+        let cancelled = wait_until_cancelled(flag.clone());
+        pin_mut!(send, cancelled);
+        let response = match select(send, cancelled).await {
+            Either::Left((response, _)) => {
+                response.map_err(|error| BackendError::ModelApi(error.to_string()))?
             }
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
-                if let Some(token) = value["choices"][0]["delta"]["content"].as_str() {
-                    app.emit(&token_event, token).ok();
+            Either::Right((_, _)) => {
+                return Err(BackendError::ModelApi("request cancelled".into()))
+            }
+        };
+
+        if !response.status().is_success() {
+            let message = format!("model API returned {}", response.status());
+            app.emit(&error_event, &message).ok();
+            return Err(BackendError::ModelApi(message));
+        }
+
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+        loop {
+            let next_chunk = stream.next();
+            let cancelled = wait_until_cancelled(flag.clone());
+            pin_mut!(next_chunk, cancelled);
+            let next = match select(next_chunk, cancelled).await {
+                Either::Left((chunk, _)) => chunk,
+                Either::Right((_, _)) => {
+                    return Err(BackendError::ModelApi("request cancelled".into()))
+                }
+            };
+            let Some(chunk) = next else { break };
+            let chunk = chunk.map_err(|error| BackendError::ModelApi(error.to_string()))?;
+            buffer.push_str(&String::from_utf8_lossy(&chunk));
+            while let Some(newline) = buffer.find('\n') {
+                let line = buffer[..newline].trim().to_string();
+                buffer.drain(..=newline);
+                let Some(data) = line.strip_prefix("data:").map(str::trim) else {
+                    continue;
+                };
+                if data == "[DONE]" {
+                    app.emit(&done_event, ()).ok();
+                    return Ok(());
+                }
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(token) = value["choices"][0]["delta"]["content"].as_str() {
+                        app.emit(&token_event, token).ok();
+                    }
                 }
             }
         }
+        let message = "SSE stream ended before the [DONE] marker";
+        app.emit(&error_event, message).ok();
+        Err(BackendError::ModelApi(message.into()))
     }
-    let message = "SSE stream ended before the [DONE] marker";
-    app.emit(&error_event, message).ok();
-    Err(BackendError::ModelApi(message.into()))
+    .await;
+    clear_cancellation(&CHAT_CANCELLATIONS, &request_id);
+    result
+}
+
+#[tauri::command]
+async fn complete_chat(request: ChatRequest) -> Result<String, BackendError> {
+    if !request.base_url.starts_with("http://") && !request.base_url.starts_with("https://") {
+        return Err(BackendError::Configuration(
+            "model API URL must use HTTP or HTTPS".into(),
+        ));
+    }
+    let request_id = request.request_id.clone();
+    let flag = cancellation_flag(&CHAT_CANCELLATIONS, &request_id)?;
+    let result = async {
+        let url = format!(
+            "{}/chat/completions",
+            request.base_url.trim_end_matches('/')
+        );
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(8))
+            .timeout(Duration::from_millis(
+                request.timeout_ms.clamp(1_000, 600_000),
+            ))
+            .build()
+            .map_err(|error| BackendError::ModelApi(error.to_string()))?;
+        let send = client
+            .post(url)
+            .json(&json!({
+                "model": request.model,
+                "temperature": request.temperature,
+                "messages": request.messages,
+                "stream": false
+            }))
+            .send();
+        let cancelled = wait_until_cancelled(flag.clone());
+        pin_mut!(send, cancelled);
+        let response = match select(send, cancelled).await {
+            Either::Left((response, _)) => {
+                response.map_err(|error| BackendError::ModelApi(error.to_string()))?
+            }
+            Either::Right((_, _)) => {
+                return Err(BackendError::ModelApi("request cancelled".into()))
+            }
+        };
+        let status = response.status();
+        if !status.is_success() {
+            return Err(BackendError::ModelApi(format!(
+                "model API returned {status}"
+            )));
+        }
+        let value: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|error| BackendError::ModelApi(error.to_string()))?;
+        value["choices"][0]["message"]["content"]
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| BackendError::ModelApi("model response did not contain content".into()))
+    }
+    .await;
+    clear_cancellation(&CHAT_CANCELLATIONS, &request_id);
+    result
+}
+
+#[tauri::command]
+fn cancel_search(request_id: String) -> Result<(), BackendError> {
+    cancel_request(&SEARCH_CANCELLATIONS, request_id)
+}
+
+#[tauri::command]
+async fn search_web(request: SearchRequest) -> Result<Vec<WebSearchResult>, BackendError> {
+    if request.query.trim().is_empty() || request.query.len() > 2_000 {
+        return Err(BackendError::Configuration(
+            "search query is invalid".into(),
+        ));
+    }
+    let api_key = keychain_secret(TAVILY_SEARCH_SERVICE, "default")
+        .ok_or_else(|| BackendError::Credential("Tavily API key is not configured".into()))?;
+    let request_id = request.request_id.clone();
+    let flag = cancellation_flag(&SEARCH_CANCELLATIONS, &request_id)?;
+    let result = async {
+        let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_millis(
+                request.timeout_ms.clamp(1_000, 60_000),
+            ))
+            .build()
+            .map_err(|error| BackendError::Network(error.to_string()))?;
+        let send = client
+            .post("https://api.tavily.com/search")
+            .json(&json!({
+                "api_key": api_key,
+                "query": request.query,
+                "search_depth": "basic",
+                "max_results": request.max_results.clamp(1, 10),
+                "include_answer": false,
+                "include_raw_content": false
+            }))
+            .send();
+        let cancelled = wait_until_cancelled(flag.clone());
+        pin_mut!(send, cancelled);
+        let response = match select(send, cancelled).await {
+            Either::Left((response, _)) => {
+                response.map_err(|error| BackendError::Network(error.to_string()))?
+            }
+            Either::Right((_, _)) => return Err(BackendError::Network("search cancelled".into())),
+        };
+        let status = response.status();
+        if !status.is_success() {
+            return Err(BackendError::Network(format!(
+                "search API returned {status}"
+            )));
+        }
+        let payload: TavilyResponse = response
+            .json()
+            .await
+            .map_err(|error| BackendError::Network(error.to_string()))?;
+        Ok(payload
+            .results
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                let parsed = reqwest::Url::parse(&item.url).ok()?;
+                if !matches!(parsed.scheme(), "http" | "https") {
+                    return None;
+                }
+                Some(WebSearchResult {
+                    id: index + 1,
+                    title: item.title,
+                    source: parsed.host_str().unwrap_or_default().to_string(),
+                    url: item.url,
+                    snippet: item.content,
+                })
+            })
+            .collect())
+    }
+    .await;
+    clear_cancellation(&SEARCH_CANCELLATIONS, &request_id);
+    result
 }
 
 #[tauri::command]
@@ -1527,6 +1775,10 @@ pub fn run() {
             execute_workspace_shell,
             check_http_health,
             stream_chat,
+            complete_chat,
+            cancel_chat,
+            search_web,
+            cancel_search,
             complete_agent
         ])
         .build(tauri::generate_context!())

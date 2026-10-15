@@ -29,9 +29,12 @@ export default function App() {
     />
   );
 
-  const saveSettings = async (settings: AppSettings, password: string) => {
+  const saveSettings = async (settings: AppSettings, password: string, searchApiKey: string) => {
     if (password && isTauri()) {
       await invoke("store_credential", { service: "local-llm-client.ssh", account: settings.username, secret: password });
+    }
+    if (searchApiKey && isTauri()) {
+      await invoke("store_credential", { service: "local-llm-client.search.tavily", account: "default", secret: searchApiKey });
     }
     app.saveSettings(settings);
   };
@@ -92,7 +95,12 @@ export default function App() {
           model={app.selectedModel}
           error={app.error}
           isStreaming={app.isStreaming}
+          searchMode={app.settings.searchMode}
+          reasoningMode={app.settings.reasoningMode}
           onSend={(content) => void app.sendMessage(content)}
+          onCancel={app.cancelStreaming}
+          onSearchModeChange={app.setSearchMode}
+          onReasoningModeChange={app.setReasoningMode}
           onRetry={() => void app.prepare()}
           onOpenSettings={() => setSettingsOpen(true)}
           modelControl={modelControl}

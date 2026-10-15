@@ -16,6 +16,12 @@ export const defaultSettings: AppSettings = {
   closeBehavior: "nothing",
   advancedMode: false,
   directApiMode: false,
+  searchMode: "auto",
+  reasoningMode: "normal",
+  searchProvider: "tavily",
+  searchMaxResults: 5,
+  searchTimeoutMs: 12_000,
+  modelTimeoutMs: 120_000,
 };
 
 export const defaultModels = models as ModelInfo[];

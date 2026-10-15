@@ -1,14 +1,20 @@
 import type { AgentResponse } from "../../domain/agent";
 import type { ShellResult } from "../../domain/tools";
-import type { ChatRequest, ProviderContext, RuntimeInstance } from "../../domain/types";
+import type { ChatRequest, Citation, ProviderContext, RuntimeInstance } from "../../domain/types";
 import { sleep } from "../../lib/utils";
 import type {
   ConnectionProvider,
   ModelProvider,
   ProviderBundle,
   RuntimeProvider,
+  SearchProvider,
+  SearchRequest,
   WakeProvider,
 } from "./contracts";
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
+}
 
 class MockEnvironment {
   reachable = false;
@@ -99,21 +105,50 @@ class MockModelProvider implements ModelProvider {
     return this.environment.runtimeRunning;
   }
 
-  async streamChat(request: ChatRequest, onToken: (token: string) => void): Promise<void> {
+  async streamChat(request: ChatRequest, onToken: (token: string) => void, signal?: AbortSignal): Promise<void> {
     const prompt = request.messages.at(-1)?.content ?? "";
-    const answer = prompt.toLowerCase().includes("owasp")
+    const hasSearchContext = request.messages.some((message) => message.content.includes("Mock search result"));
+    const answer = hasSearchContext
+      ? "Mock 검색 근거를 반영한 최종 답변입니다. 최신 정보는 제공된 출처에서 확인할 수 있습니다. [1]"
+      : prompt.toLowerCase().includes("owasp")
       ? `OWASP 관점에서 분석을 시작하겠습니다.\n\n1. **공격 표면 확인** — 인증, 입력 검증, 세션 경계를 먼저 파악합니다.\n2. **안전한 테스트 계획** — 허가된 환경에서만 재현하고 증거를 기록합니다.\n3. **우선순위화** — 악용 가능성과 영향도를 함께 평가합니다.\n\n현재는 Mock Mode이므로 실제 대상에 요청을 보내지는 않았습니다.`
       : demoAnswer;
 
     for (const token of answer.match(/.{1,5}/gs) ?? []) {
+      throwIfAborted(signal);
       await sleep(28);
+      throwIfAborted(signal);
       onToken(token);
     }
+  }
+
+  async completeChat(request: ChatRequest, signal?: AbortSignal): Promise<string> {
+    throwIfAborted(signal);
+    await sleep(80);
+    throwIfAborted(signal);
+    return request.requestId.endsWith(":critique")
+      ? "초안의 사실성, 범위, 인용 연결을 확인하고 불명확한 표현을 수정하세요."
+      : "검색 결과를 바탕으로 작성한 검토용 초안입니다. [1]";
   }
 
   async completeAgent(_context: ProviderContext, task: string, steps: unknown[]): Promise<AgentResponse> {
     if (steps.length === 0) return { type: "tool_call", id: crypto.randomUUID(), tool: "list_directory", arguments: { path: "" } };
     return { type: "final", content: `Mock agent completed: ${task}` };
+  }
+}
+
+class MockSearchProvider implements SearchProvider {
+  async search(request: SearchRequest, signal?: AbortSignal): Promise<Citation[]> {
+    throwIfAborted(signal);
+    await sleep(120);
+    throwIfAborted(signal);
+    return [{
+      id: 1,
+      title: `Mock search result for ${request.query}`,
+      url: "https://example.com/mock-source",
+      snippet: "Mock Mode의 결정론적 검색 결과입니다.",
+      source: "example.com",
+    }];
   }
 }
 
@@ -124,5 +159,6 @@ export function createMockProviders(): ProviderBundle {
     connection: new MockConnectionProvider(environment),
     runtime: new MockRuntimeProvider(environment),
     model: new MockModelProvider(environment),
+    search: new MockSearchProvider(),
   };
 }

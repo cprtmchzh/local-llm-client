@@ -4,15 +4,16 @@ import type { AppSettings } from "../domain/types";
 
 interface SettingsDialogProps {
   initial: AppSettings;
-  onSave: (settings: AppSettings, password: string) => Promise<void>;
+  onSave: (settings: AppSettings, password: string, searchApiKey: string) => Promise<void>;
   onClose: () => void;
 }
 
-type Tab = "connection" | "wake" | "runtime" | "application";
+type Tab = "connection" | "wake" | "runtime" | "search" | "application";
 
 export function SettingsDialog({ initial, onSave, onClose }: SettingsDialogProps) {
   const [settings, setSettings] = useState(initial);
   const [password, setPassword] = useState("");
+  const [searchApiKey, setSearchApiKey] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [tab, setTab] = useState<Tab>("connection");
   const [saving, setSaving] = useState(false);
@@ -32,7 +33,7 @@ export function SettingsDialog({ initial, onSave, onClose }: SettingsDialogProps
     event.preventDefault();
     setSaving(true);
     try {
-      await onSave(settings, password);
+      await onSave(settings, password, searchApiKey);
       onClose();
     } finally {
       setSaving(false);
@@ -63,6 +64,7 @@ export function SettingsDialog({ initial, onSave, onClose }: SettingsDialogProps
               ["connection", "연결"],
               ["wake", "Wake-on-LAN"],
               ["runtime", "런타임"],
+              ["search", "웹 검색"],
               ["application", "애플리케이션"],
             ] as const).map(([id, label]) => (
               <button
@@ -101,6 +103,19 @@ export function SettingsDialog({ initial, onSave, onClose }: SettingsDialogProps
             ) : null}
             {tab === "runtime" ? (
               <><div className="section-copy"><h3>런타임</h3><p>모델별 명령과 API 주소는 Model Registry에서 관리됩니다.</p></div><div className="info-panel"><strong>llama.cpp · OpenAI 호환 API</strong><p>기본 연결은 임시 localhost 포트를 사용하는 SSH tunnel입니다.</p><p>모델 프로필 편집 UI는 다음 마일스톤에서 제공됩니다.</p></div><label className="toggle-row"><span><strong>Direct LAN API (Debug)</strong><small>SSH tunnel을 우회합니다. 신뢰할 수 있는 개발망에서만 사용하세요.</small></span><input type="checkbox" checked={settings.directApiMode} onChange={(event) => update("directApiMode", event.target.checked)} /></label></>
+            ) : null}
+            {tab === "search" ? (
+              <>
+                <div className="section-copy"><h3>웹 검색</h3><p>검색 요청은 UI가 아닌 Tauri 네이티브 계층에서 수행됩니다.</p></div>
+                <label><span>Search Provider</span><select value={settings.searchProvider} onChange={(event) => update("searchProvider", event.target.value as AppSettings["searchProvider"])}><option value="tavily">Tavily</option></select></label>
+                <label><span>Tavily API 키</span><div className="password-field"><KeyRound size={16} /><input type={showPassword ? "text" : "password"} value={searchApiKey} autoComplete="new-password" placeholder="OS 자격 증명 저장소에만 저장" onChange={(event) => setSearchApiKey(event.target.value)} /></div></label>
+                <div className="field-row">
+                  <label><span>최대 검색 결과</span><input type="number" min="1" max="10" value={settings.searchMaxResults} onChange={(event) => update("searchMaxResults", Number(event.target.value))} /></label>
+                  <label><span>검색 제한 시간 (ms)</span><input type="number" min="1000" max="60000" step="1000" value={settings.searchTimeoutMs} onChange={(event) => update("searchTimeoutMs", Number(event.target.value))} /></label>
+                </div>
+                <label><span>모델 단계 제한 시간 (ms)</span><input type="number" min="5000" max="600000" step="5000" value={settings.modelTimeoutMs} onChange={(event) => update("modelTimeoutMs", Number(event.target.value))} /></label>
+                <div className="info-panel"><strong>보안 저장</strong><p>API 키는 localStorage에 기록되지 않으며 macOS Keychain 또는 Windows Credential Manager에 저장됩니다.</p></div>
+              </>
             ) : null}
             {tab === "application" ? (
               <><div className="section-copy"><h3>애플리케이션</h3><p>개발과 실제 사용 환경을 전환합니다.</p></div><label className="toggle-row"><span><strong>Mock Mode</strong><small>Windows 없이 전체 흐름을 시뮬레이션합니다.</small></span><input type="checkbox" checked={settings.mockMode} onChange={(event) => update("mockMode", event.target.checked)} /></label><label className="toggle-row"><span><strong>Advanced Mode</strong><small>상세 연결 로그를 표시합니다.</small></span><input type="checkbox" checked={settings.advancedMode} onChange={(event) => update("advancedMode", event.target.checked)} /></label><label><span>앱 종료 시</span><select value={settings.closeBehavior} onChange={(event) => update("closeBehavior", event.target.value as AppSettings["closeBehavior"])}><option value="nothing">아무 작업도 하지 않음</option><option value="stop-runtime">모델 런타임 중지</option><option value="sleep-windows">Windows 절전</option></select></label></>

@@ -11,6 +11,9 @@
 - SSH local port forwarding을 통한 health/SSE 접근(Direct LAN은 debug opt-in)
 - process ownership/PID 기반 runtime lifecycle과 typed executable/argv launch profile
 - llama.cpp, Ollama 및 OpenAI-compatible API health check/SSE chat
+- Web Search `off/auto/on`, 모델별 `fast/normal/deep/deep-review` 추론 모드
+- 검색 근거 주입, inline citation/출처 UI, Draft → Critique → Final Revision 파이프라인
+- 단계별 timeout/cancel 및 검색 실패 시 model-only fallback
 - Workspace/recent workspace, 경계 검증, read/search/metadata/atomic patch 도구
 - AgentOrchestrator, Qwen/OpenAI tool-call adapter, budget/cancel/approval policy
 - Chat을 유지하는 Agent activity/diff/tool output UI
@@ -54,13 +57,15 @@ npm run test:e2e:windows -- --target user@windows-host \
 
 llama-server/Ollama는 Windows `127.0.0.1`에만 바인딩할 수 있습니다. 앱은 임시 Mac localhost 포트를 열고 SSH tunnel을 통해 health와 streaming 요청을 전달합니다. Settings의 Direct LAN API는 디버그용 opt-in입니다.
 
+웹 검색을 사용하려면 Settings → 웹 검색에서 Tavily API 키를 저장합니다. 키는 OS credential store에만 저장되며, 검색 요청은 React WebView가 아니라 Rust backend에서 전송합니다. Composer에서 검색과 추론 모드를 메시지별로 선택할 수 있습니다.
+
 ## 모델 추가
 
 [`config/models.json`](config/models.json)에 모델을 등록하고 [`config/launch-profiles.json`](config/launch-profiles.json)의 프로필 ID를 연결합니다. launch는 `executable`과 `args[]`로 분리됩니다. 지원 placeholder는 `{modelPath}`, `{contextSize}`, `{gpuLayers}`, `{threads}`, `{batchSize}`, `{port}`이며 API URL에는 `{host}`를 사용할 수 있습니다. 자격 증명은 이 파일에 넣지 않습니다.
 
 ## 저장과 보안
 
-일반 설정, registry snapshot, 대화는 현재 WebView localStorage에 저장됩니다. SSH 암호는 Rust backend를 거쳐 macOS Keychain의 `local-llm-client.ssh` service에 저장되며 설정/로그에는 기록되지 않습니다. 민감 파일, `.env`, 개인 키, DB 파일은 `.gitignore`에서 제외됩니다.
+일반 설정, registry snapshot, 대화, citation/final response metadata는 현재 WebView localStorage에 저장됩니다. SSH 암호와 Tavily API 키는 Rust backend를 거쳐 OS credential store의 allowlisted service에만 저장되며 설정/로그에는 기록되지 않습니다. 민감 파일, `.env`, 개인 키, DB 파일은 `.gitignore`에서 제외됩니다.
 
 ## 문서
 

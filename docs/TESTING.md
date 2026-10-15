@@ -7,7 +7,7 @@ npm test
 npm run build
 ```
 
-현재 suite는 상태 전이, offline wake에서 model ready까지 orchestration, runtime reuse/health failure, typed launch validation, workspace traversal rejection, tool policy, deterministic agent loop/budget/cancel/approval, Qwen/OpenAI response normalization, model selector 동작을 검증합니다. TypeScript production build는 strict typing과 Vite bundling을 함께 확인합니다.
+현재 suite는 상태 전이, offline wake에서 model ready까지 orchestration, runtime reuse/health failure, typed launch validation, workspace traversal rejection, tool policy, deterministic agent loop/budget/cancel/approval, 검색 mode routing/dedup/fallback/timeout, reasoning capability fallback, Deep Review sequencing, citation UI, composer cancellation, Qwen/OpenAI response normalization, model selector 동작을 검증합니다. TypeScript production build는 strict typing과 Vite bundling을 함께 확인합니다.
 
 Rust가 설치된 환경에서는 다음을 추가합니다.
 
@@ -37,6 +37,9 @@ npm run test:e2e:windows -- \
 5. 새 대화/대화 재선택/삭제 후 새로고침 persistence 확인
 6. 모델 변경 후 다음 메시지가 새 모델을 사용하는지 확인
 7. Advanced Mode에서 credential 없는 단계 로그만 표시되는지 확인
+8. 검색 `off/auto/on` 각각에서 Mock Search 호출 여부와 citation card 확인
+9. 추론 `fast/normal/deep/deep-review` 선택과 Draft → Critique → Final Revision 단계 표시 확인
+10. 생성 중 정지 버튼으로 즉시 non-pending 상태가 되고 다음 메시지를 보낼 수 있는지 확인
 
 ## Windows E2E 체크리스트
 
@@ -47,6 +50,11 @@ npm run test:e2e:windows -- \
 - health timeout과 방화벽 차단
 - 모델 A → B 전환과 process ownership
 - SSE 정상 완료/중간 단절/비정상 HTTP status
+- Credential Manager에 Tavily 키가 저장되고 localStorage/로그에 남지 않는지 확인
+- Tavily native HTTPS 요청과 검색 timeout/cancel이 UI 상태까지 전파되는지 확인
+- Deep Review 각 단계 timeout, SSE final revision 취소, 재시도 가능 상태 확인
+- citation/source link가 기본 브라우저로 열리는지 확인
+- Tauri Windows package에서 검색 IPC allowlist와 CSP 경계 확인
 - 앱 종료 기본 정책이 Windows/runtime을 변경하지 않는지 확인
 
 ## 2026-10-15 실기기 결과
