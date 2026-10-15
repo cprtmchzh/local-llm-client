@@ -9,6 +9,7 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { Sidebar } from "./components/Sidebar";
 import { StatusPill } from "./components/StatusPill";
 import type { AppSettings } from "./domain/types";
+import type { ShellResult } from "./domain/tools";
 import { useAppController } from "./hooks/useAppController";
 import { useAgentController } from "./hooks/useAgentController";
 import { isTauri } from "./lib/utils";
@@ -37,6 +38,26 @@ export default function App() {
       await invoke("store_credential", { service: "local-llm-client.search.tavily", account: "default", secret: searchApiKey });
     }
     app.saveSettings(settings);
+  };
+
+  const installWindowsSearxng = async (settings: AppSettings, password: string) => {
+    if (password && isTauri()) {
+      await invoke("store_credential", { service: "local-llm-client.ssh", account: settings.username, secret: password });
+    }
+    if (!isTauri()) throw new Error("Windows 설치는 데스크톱 앱에서만 실행할 수 있습니다.");
+    app.saveSettings(settings);
+    const result = await invoke<ShellResult>("install_windows_searxng", {
+      connection: {
+        host: settings.host,
+        port: settings.sshPort,
+        username: settings.username,
+        authentication: settings.authentication,
+        privateKeyPath: settings.privateKeyPath,
+      },
+    });
+    if (result.exitCode !== 0) {
+      throw new Error(result.stderr || result.stdout || "Windows SearXNG 설치에 실패했습니다.");
+    }
   };
 
   return (
@@ -126,7 +147,7 @@ export default function App() {
         )}
       </section>
       {logsOpen ? <LogsPanel logs={app.logs} onClose={() => setLogsOpen(false)} /> : null}
-      {settingsOpen ? <SettingsDialog initial={app.settings} onSave={saveSettings} onClose={() => setSettingsOpen(false)} /> : null}
+      {settingsOpen ? <SettingsDialog initial={app.settings} onSave={saveSettings} onInstallSearch={installWindowsSearxng} onClose={() => setSettingsOpen(false)} /> : null}
     </div>
   );
 }

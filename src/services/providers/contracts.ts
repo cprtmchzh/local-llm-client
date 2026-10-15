@@ -1,6 +1,6 @@
 import type { AgentResponse } from "../../domain/agent";
 import type { ShellResult } from "../../domain/tools";
-import type { ChatRequest, Citation, ProviderContext, RuntimeInstance } from "../../domain/types";
+import type { ChatRequest, Citation, ProviderContext, RuntimeInstance, SearchProviderMode } from "../../domain/types";
 
 export interface WakeProvider {
   wake(context: ProviderContext): Promise<void>;
@@ -34,10 +34,12 @@ export interface SearchRequest {
   query: string;
   maxResults: number;
   timeoutMs: number;
+  provider: SearchProviderMode;
+  searxngBaseUrl: string;
 }
 
 export interface SearchProvider {
-  search(request: SearchRequest, signal?: AbortSignal): Promise<Citation[]>;
+  search(request: SearchRequest, context: ProviderContext, signal?: AbortSignal): Promise<Citation[]>;
 }
 
 export interface ProviderBundle {

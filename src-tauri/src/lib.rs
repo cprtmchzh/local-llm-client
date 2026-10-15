@@ -157,6 +157,8 @@ struct SearchRequest {
     query: String,
     max_results: usize,
     timeout_ms: u64,
+    provider: String,
+    searxng_base_url: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -178,6 +180,19 @@ struct TavilyResponse {
 struct TavilyResult {
     title: String,
     url: String,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearxngResponse {
+    results: Vec<SearxngResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearxngResult {
+    title: String,
+    url: String,
+    #[serde(default)]
     content: String,
 }
 
@@ -462,6 +477,17 @@ async fn execute_ssh(
 ) -> Result<ShellResult, BackendError> {
     tauri::async_runtime::spawn_blocking(move || {
         execute_ssh_inner(&connection, &command, timeout_ms)
+    })
+    .await
+    .map_err(|error| BackendError::Command(error.to_string()))?
+}
+
+#[tauri::command]
+async fn install_windows_searxng(connection: SshConnection) -> Result<ShellResult, BackendError> {
+    let script = include_str!("../../scripts/windows-start-searxng.ps1");
+    let command = powershell_encoded(script);
+    tauri::async_runtime::spawn_blocking(move || {
+        execute_ssh_inner(&connection, &command, 180_000)
     })
     .await
     .map_err(|error| BackendError::Command(error.to_string()))?
@@ -1610,6 +1636,134 @@ fn cancel_search(request_id: String) -> Result<(), BackendError> {
     cancel_request(&SEARCH_CANCELLATIONS, request_id)
 }
 
+fn searxng_search_url(base_url: &str) -> Result<reqwest::Url, BackendError> {
+    if base_url.trim().is_empty() {
+        return Err(BackendError::Configuration(
+            "SearXNG URL is not configured".into(),
+        ));
+    }
+    let mut url = reqwest::Url::parse(base_url.trim())
+        .map_err(|error| BackendError::Configuration(format!("invalid SearXNG URL: {error}")))?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(BackendError::Configuration(
+            "SearXNG URL must be an HTTP(S) URL without embedded credentials".into(),
+        ));
+    }
+    let path = url.path().trim_end_matches('/').to_string();
+    if !path.ends_with("/search") {
+        url.set_path(&format!("{path}/search"));
+    }
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url)
+}
+
+async fn send_cancellable_search(
+    request: reqwest::RequestBuilder,
+    flag: Arc<AtomicBool>,
+) -> Result<reqwest::Response, BackendError> {
+    let send = request.send();
+    let cancelled = wait_until_cancelled(flag);
+    pin_mut!(send, cancelled);
+    match select(send, cancelled).await {
+        Either::Left((response, _)) => {
+            response.map_err(|error| BackendError::Network(error.to_string()))
+        }
+        Either::Right((_, _)) => Err(BackendError::Network("search cancelled".into())),
+    }
+}
+
+fn into_web_result(
+    index: usize,
+    title: String,
+    url: String,
+    snippet: String,
+) -> Option<WebSearchResult> {
+    let parsed = reqwest::Url::parse(&url).ok()?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    Some(WebSearchResult {
+        id: index + 1,
+        title,
+        source: parsed.host_str().unwrap_or_default().to_string(),
+        url,
+        snippet,
+    })
+}
+
+async fn search_searxng(
+    client: &reqwest::Client,
+    request: &SearchRequest,
+    flag: Arc<AtomicBool>,
+) -> Result<Vec<WebSearchResult>, BackendError> {
+    let url = searxng_search_url(&request.searxng_base_url)?;
+    let response = send_cancellable_search(
+        client.get(url).query(&[
+            ("q", request.query.as_str()),
+            ("format", "json"),
+            ("categories", "general"),
+            ("language", "auto"),
+            ("safesearch", "0"),
+        ]),
+        flag,
+    )
+    .await?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(BackendError::Network(format!("SearXNG returned {status}")));
+    }
+    let payload: SearxngResponse = response
+        .json()
+        .await
+        .map_err(|error| BackendError::Network(format!("invalid SearXNG response: {error}")))?;
+    Ok(payload
+        .results
+        .into_iter()
+        .take(request.max_results.clamp(1, 10))
+        .enumerate()
+        .filter_map(|(index, item)| into_web_result(index, item.title, item.url, item.content))
+        .collect())
+}
+
+async fn search_tavily(
+    client: &reqwest::Client,
+    request: &SearchRequest,
+    flag: Arc<AtomicBool>,
+) -> Result<Vec<WebSearchResult>, BackendError> {
+    let api_key = keychain_secret(TAVILY_SEARCH_SERVICE, "default")
+        .ok_or_else(|| BackendError::Credential("Tavily API key is not configured".into()))?;
+    let response = send_cancellable_search(
+        client.post("https://api.tavily.com/search").json(&json!({
+            "api_key": api_key,
+            "query": request.query,
+            "search_depth": "basic",
+            "max_results": request.max_results.clamp(1, 10),
+            "include_answer": false,
+            "include_raw_content": false
+        })),
+        flag,
+    )
+    .await?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(BackendError::Network(format!("Tavily returned {status}")));
+    }
+    let payload: TavilyResponse = response
+        .json()
+        .await
+        .map_err(|error| BackendError::Network(format!("invalid Tavily response: {error}")))?;
+    Ok(payload
+        .results
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, item)| into_web_result(index, item.title, item.url, item.content))
+        .collect())
+}
+
 #[tauri::command]
 async fn search_web(request: SearchRequest) -> Result<Vec<WebSearchResult>, BackendError> {
     if request.query.trim().is_empty() || request.query.len() > 2_000 {
@@ -1617,8 +1771,6 @@ async fn search_web(request: SearchRequest) -> Result<Vec<WebSearchResult>, Back
             "search query is invalid".into(),
         ));
     }
-    let api_key = keychain_secret(TAVILY_SEARCH_SERVICE, "default")
-        .ok_or_else(|| BackendError::Credential("Tavily API key is not configured".into()))?;
     let request_id = request.request_id.clone();
     let flag = cancellation_flag(&SEARCH_CANCELLATIONS, &request_id)?;
     let result = async {
@@ -1629,53 +1781,29 @@ async fn search_web(request: SearchRequest) -> Result<Vec<WebSearchResult>, Back
             ))
             .build()
             .map_err(|error| BackendError::Network(error.to_string()))?;
-        let send = client
-            .post("https://api.tavily.com/search")
-            .json(&json!({
-                "api_key": api_key,
-                "query": request.query,
-                "search_depth": "basic",
-                "max_results": request.max_results.clamp(1, 10),
-                "include_answer": false,
-                "include_raw_content": false
-            }))
-            .send();
-        let cancelled = wait_until_cancelled(flag.clone());
-        pin_mut!(send, cancelled);
-        let response = match select(send, cancelled).await {
-            Either::Left((response, _)) => {
-                response.map_err(|error| BackendError::Network(error.to_string()))?
-            }
-            Either::Right((_, _)) => return Err(BackendError::Network("search cancelled".into())),
-        };
-        let status = response.status();
-        if !status.is_success() {
-            return Err(BackendError::Network(format!(
-                "search API returned {status}"
-            )));
-        }
-        let payload: TavilyResponse = response
-            .json()
-            .await
-            .map_err(|error| BackendError::Network(error.to_string()))?;
-        Ok(payload
-            .results
-            .into_iter()
-            .enumerate()
-            .filter_map(|(index, item)| {
-                let parsed = reqwest::Url::parse(&item.url).ok()?;
-                if !matches!(parsed.scheme(), "http" | "https") {
-                    return None;
+        match request.provider.as_str() {
+            "searxng" => search_searxng(&client, &request, flag.clone()).await,
+            "tavily" => search_tavily(&client, &request, flag.clone()).await,
+            "searxng-tavily" => {
+                let primary = search_searxng(&client, &request, flag.clone()).await;
+                match primary {
+                    Ok(results) if !results.is_empty() => Ok(results),
+                    Ok(_) => search_tavily(&client, &request, flag.clone())
+                        .await
+                        .map_err(|fallback| BackendError::Network(format!(
+                            "SearXNG returned no results; Tavily fallback failed: {fallback}"
+                        ))),
+                    Err(primary_error) => search_tavily(&client, &request, flag.clone())
+                        .await
+                        .map_err(|fallback| BackendError::Network(format!(
+                            "SearXNG request failed: {primary_error}; Tavily fallback failed: {fallback}"
+                        ))),
                 }
-                Some(WebSearchResult {
-                    id: index + 1,
-                    title: item.title,
-                    source: parsed.host_str().unwrap_or_default().to_string(),
-                    url: item.url,
-                    snippet: item.content,
-                })
-            })
-            .collect())
+            }
+            _ => Err(BackendError::Configuration(
+                "unsupported search provider".into(),
+            )),
+        }
     }
     .await;
     clear_cancellation(&SEARCH_CANCELLATIONS, &request_id);
@@ -1759,6 +1887,7 @@ pub fn run() {
             execute_custom_wake,
             check_ssh,
             execute_ssh,
+            install_windows_searxng,
             start_ssh_tunnel,
             stop_ssh_tunnel,
             start_remote_runtime,
@@ -1823,5 +1952,23 @@ mod tests {
             [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]
         );
         assert!(parse_mac_address("invalid").is_err());
+    }
+
+    #[test]
+    fn builds_searxng_search_endpoints() {
+        assert_eq!(
+            searxng_search_url("http://127.0.0.1:8888")
+                .unwrap()
+                .as_str(),
+            "http://127.0.0.1:8888/search"
+        );
+        assert_eq!(
+            searxng_search_url("https://search.example.test/prefix/")
+                .unwrap()
+                .as_str(),
+            "https://search.example.test/prefix/search"
+        );
+        assert!(searxng_search_url("file:///tmp/search").is_err());
+        assert!(searxng_search_url("https://user:pass@example.test").is_err());
     }
 }

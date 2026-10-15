@@ -5,18 +5,21 @@ import type { AppSettings } from "../domain/types";
 interface SettingsDialogProps {
   initial: AppSettings;
   onSave: (settings: AppSettings, password: string, searchApiKey: string) => Promise<void>;
+  onInstallSearch: (settings: AppSettings, password: string) => Promise<void>;
   onClose: () => void;
 }
 
 type Tab = "connection" | "wake" | "runtime" | "search" | "application";
 
-export function SettingsDialog({ initial, onSave, onClose }: SettingsDialogProps) {
+export function SettingsDialog({ initial, onSave, onInstallSearch, onClose }: SettingsDialogProps) {
   const [settings, setSettings] = useState(initial);
   const [password, setPassword] = useState("");
   const [searchApiKey, setSearchApiKey] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [tab, setTab] = useState<Tab>("connection");
   const [saving, setSaving] = useState(false);
+  const [installingSearch, setInstallingSearch] = useState(false);
+  const [searchSetupStatus, setSearchSetupStatus] = useState("");
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -37,6 +40,19 @@ export function SettingsDialog({ initial, onSave, onClose }: SettingsDialogProps
       onClose();
     } finally {
       setSaving(false);
+    }
+  };
+
+  const installSearch = async () => {
+    setInstallingSearch(true);
+    setSearchSetupStatus("");
+    try {
+      await onInstallSearch(settings, password);
+      setSearchSetupStatus("Windows SearXNG가 준비되었습니다. 설정을 저장하면 SSH 터널로 연결됩니다.");
+    } catch (error) {
+      setSearchSetupStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setInstallingSearch(false);
     }
   };
 
@@ -106,15 +122,18 @@ export function SettingsDialog({ initial, onSave, onClose }: SettingsDialogProps
             ) : null}
             {tab === "search" ? (
               <>
-                <div className="section-copy"><h3>웹 검색</h3><p>검색 요청은 UI가 아닌 Tauri 네이티브 계층에서 수행됩니다.</p></div>
-                <label><span>Search Provider</span><select value={settings.searchProvider} onChange={(event) => update("searchProvider", event.target.value as AppSettings["searchProvider"])}><option value="tavily">Tavily</option></select></label>
-                <label><span>Tavily API 키</span><div className="password-field"><KeyRound size={16} /><input type={showPassword ? "text" : "password"} value={searchApiKey} autoComplete="new-password" placeholder="API 키 입력 후 설정 저장" onChange={(event) => setSearchApiKey(event.target.value)} /></div></label>
+                <div className="section-copy"><h3>웹 검색</h3><p>Windows의 SearXNG를 SSH 터널로 사용하면 검색 API 크레딧 제한 없이 검색할 수 있습니다.</p></div>
+                <label><span>Search Provider</span><select value={settings.searchProvider} onChange={(event) => update("searchProvider", event.target.value as AppSettings["searchProvider"])}><option value="searxng-tavily">SearXNG 우선 · Tavily 폴백</option><option value="searxng">SearXNG만 사용</option><option value="tavily">Tavily만 사용</option></select></label>
+                {settings.searchProvider !== "tavily" ? <label><span>Windows SearXNG 주소</span><input type="url" value={settings.searxngBaseUrl} placeholder="http://127.0.0.1:8888" onChange={(event) => update("searxngBaseUrl", event.target.value)} /><small>Windows 내부 주소를 입력하세요. localhost 주소는 SSH 터널로만 연결됩니다.</small></label> : null}
+                {settings.searchProvider !== "searxng" ? <label><span>Tavily API 키 (선택)</span><div className="password-field"><KeyRound size={16} /><input type={showPassword ? "text" : "password"} value={searchApiKey} autoComplete="new-password" placeholder="폴백을 사용할 때만 입력" onChange={(event) => setSearchApiKey(event.target.value)} /></div></label> : null}
                 <div className="field-row">
                   <label><span>최대 검색 결과</span><input type="number" min="1" max="10" value={settings.searchMaxResults} onChange={(event) => update("searchMaxResults", Number(event.target.value))} /></label>
                   <label><span>검색 제한 시간 (ms)</span><input type="number" min="1000" max="60000" step="1000" value={settings.searchTimeoutMs} onChange={(event) => update("searchTimeoutMs", Number(event.target.value))} /></label>
                 </div>
                 <div className="info-panel"><strong>모델 응답 시간</strong><p>답변 생성은 시간 제한 없이 계속되며, 작성 중에는 취소 버튼으로 직접 중단할 수 있습니다.</p></div>
-                <div className="info-panel"><strong>보안 저장</strong><p>API 키는 localStorage에 기록되지 않으며 설정 저장 시 macOS Keychain 또는 Windows Credential Manager에 저장됩니다.</p></div>
+                <div className="info-panel"><strong>검색 순서</strong><p>SearXNG 우선 모드는 Windows 자체 인스턴스가 실패하거나 결과가 없을 때만 Tavily를 호출합니다. SearXNG 포트는 외부나 LAN에 공개하지 않습니다.</p></div>
+                <div className="info-panel"><strong>Windows 검색 서버</strong><p>Windows에 Docker Desktop이 설치되어 실행 중이어야 합니다.</p><button type="button" className="secondary" disabled={installingSearch || saving} onClick={() => void installSearch()}>{installingSearch ? "설치 및 확인 중..." : "Windows에 SearXNG 설치/시작"}</button>{searchSetupStatus ? <p role="status">{searchSetupStatus}</p> : null}</div>
+                <div className="info-panel"><strong>보안 저장</strong><p>Tavily 키는 localStorage에 기록되지 않으며 설정 저장 시 macOS Keychain 또는 Windows Credential Manager에 저장됩니다.</p></div>
               </>
             ) : null}
             {tab === "application" ? (

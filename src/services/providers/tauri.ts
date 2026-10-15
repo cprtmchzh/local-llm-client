@@ -51,9 +51,54 @@ class TauriWakeProvider implements WakeProvider {
 
 class TauriConnectionProvider implements ConnectionProvider {
   private readonly tunnels = new Map<string, TunnelInfo>();
+  private readonly searchTunnels = new Map<string, TunnelInfo>();
 
   private tunnelKey(context: ProviderContext): string {
     return `${context.settings.username}@${context.settings.host}:${context.settings.sshPort}/${context.profile.port}`;
+  }
+
+  private searchTunnelKey(context: ProviderContext, remotePort: number): string {
+    return `${context.settings.username}@${context.settings.host}:${context.settings.sshPort}/search/${remotePort}`;
+  }
+
+  private remoteSearxngUrl(context: ProviderContext): URL | null {
+    if (context.settings.searchProvider === "tavily") return null;
+    let url: URL;
+    try {
+      url = new URL(context.settings.searxngBaseUrl);
+    } catch {
+      return null;
+    }
+    return ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ? url : null;
+  }
+
+  private async ensureSearchTunnel(context: ProviderContext): Promise<TunnelInfo | null> {
+    const remoteUrl = this.remoteSearxngUrl(context);
+    if (!remoteUrl) return null;
+    const remotePort = Number(remoteUrl.port || (remoteUrl.protocol === "https:" ? 443 : 80));
+    if (!Number.isInteger(remotePort) || remotePort < 1 || remotePort > 65535) {
+      throw new Error("Windows SearXNG port is invalid");
+    }
+    const key = this.searchTunnelKey(context, remotePort);
+    const existing = this.searchTunnels.get(key);
+    if (existing) return existing;
+    const tunnel = await invoke<TunnelInfo>("start_ssh_tunnel", {
+      connection: connectionArgs(context),
+      remotePort,
+    });
+    this.searchTunnels.set(key, tunnel);
+    return tunnel;
+  }
+
+  async searxngBaseUrl(context: ProviderContext): Promise<string> {
+    const remoteUrl = this.remoteSearxngUrl(context);
+    if (!remoteUrl) return context.settings.searxngBaseUrl;
+    const tunnel = await this.ensureSearchTunnel(context);
+    if (!tunnel) return context.settings.searxngBaseUrl;
+    remoteUrl.protocol = "http:";
+    remoteUrl.hostname = "127.0.0.1";
+    remoteUrl.port = String(tunnel.localPort);
+    return remoteUrl.toString().replace(/\/$/, "");
   }
 
   async isReachable(context: ProviderContext): Promise<boolean> {
@@ -68,12 +113,14 @@ class TauriConnectionProvider implements ConnectionProvider {
       if (stale) await invoke("stop_ssh_tunnel", { tunnelId: stale.id });
       const tunnel = await invoke<TunnelInfo>("start_ssh_tunnel", { connection: connectionArgs(context), remotePort: context.profile.port });
       this.tunnels.set(key, tunnel);
+      await this.ensureSearchTunnel(context);
     }
   }
 
   async disconnect(): Promise<void> {
-    await Promise.all([...this.tunnels.values()].map((tunnel) => invoke("stop_ssh_tunnel", { tunnelId: tunnel.id })));
+    await Promise.all([...this.tunnels.values(), ...this.searchTunnels.values()].map((tunnel) => invoke("stop_ssh_tunnel", { tunnelId: tunnel.id })));
     this.tunnels.clear();
+    this.searchTunnels.clear();
   }
 
   async execute(context: ProviderContext, command: string, timeoutMs = 120_000): Promise<ShellResult> {
@@ -178,10 +225,16 @@ class TauriModelProvider implements ModelProvider {
 }
 
 class TauriSearchProvider implements SearchProvider {
-  async search(request: SearchRequest, signal?: AbortSignal): Promise<Citation[]> {
+  constructor(private readonly connection: TauriConnectionProvider) {}
+
+  async search(request: SearchRequest, context: ProviderContext, signal?: AbortSignal): Promise<Citation[]> {
+    const nativeRequest = {
+      ...request,
+      searxngBaseUrl: await this.connection.searxngBaseUrl(context),
+    };
     return invokeWithCancellation<Citation[]>(
       "search_web",
-      { request },
+      { request: nativeRequest },
       signal,
       "cancel_search",
       request.requestId,
@@ -196,6 +249,6 @@ export function createTauriProviders(): ProviderBundle {
     connection,
     runtime: new TauriRuntimeProvider(connection),
     model: new TauriModelProvider(connection),
-    search: new TauriSearchProvider(),
+    search: new TauriSearchProvider(connection),
   };
 }

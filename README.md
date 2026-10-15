@@ -11,7 +11,7 @@
 - SSH local port forwarding을 통한 health/SSE 접근(Direct LAN은 debug opt-in)
 - process ownership/PID 기반 runtime lifecycle과 typed executable/argv launch profile
 - llama.cpp, Ollama 및 OpenAI-compatible API health check/SSE chat
-- Web Search `off/auto/on`, 모델별 `fast/normal/deep/deep-review` 추론 모드
+- SearXNG 우선/Tavily 선택 폴백 Web Search `off/auto/on`, 모델별 `fast/normal/deep/deep-review` 추론 모드
 - 검색 근거 주입, inline citation/출처 UI, Draft → Critique → Final Revision 파이프라인
 - 단계별 timeout/cancel 및 검색 실패 시 model-only fallback
 - Workspace/recent workspace, 경계 검증, read/search/metadata/atomic patch 도구
@@ -55,9 +55,11 @@ npm run test:e2e:windows -- --target user@windows-host \
 5. `config/models.json`의 모델 경로 및 `config/launch-profiles.json`의 typed `launch.executable`/`launch.args`를 실제 Windows 환경에 맞춥니다. 실행 중인 Ollama는 `ollama-agent` 프로필을 사용할 수 있습니다.
 6. Mock Mode를 끄고 상단의 다시 연결 버튼을 누릅니다.
 
+API 키 제한 없는 웹 검색을 사용하려면 Windows에서 Docker Desktop을 실행한 뒤 PowerShell로 `scripts/windows-start-searxng.ps1`을 한 번 실행합니다. 컨테이너는 Windows의 `127.0.0.1:8888`에만 바인딩되며 앱이 기존 SSH 연결에 별도 터널을 만들어 접근합니다. 따라서 SearXNG 포트를 Windows 방화벽이나 공유기에 열지 않습니다.
+
 llama-server/Ollama는 Windows `127.0.0.1`에만 바인딩할 수 있습니다. 앱은 임시 Mac localhost 포트를 열고 SSH tunnel을 통해 health와 streaming 요청을 전달합니다. Settings의 Direct LAN API는 디버그용 opt-in입니다.
 
-웹 검색을 사용하려면 Settings → 웹 검색에서 Tavily API 키를 저장합니다. 키는 OS credential store에만 저장되며, 검색 요청은 React WebView가 아니라 Rust backend에서 전송합니다. Composer에서 검색과 추론 모드를 메시지별로 선택할 수 있습니다.
+웹 검색은 기본적으로 Windows `http://127.0.0.1:8888`의 자체 SearXNG 인스턴스를 SSH 터널로 먼저 사용하며, 실패하거나 결과가 없을 때만 Tavily로 폴백합니다. Settings → 웹 검색에서 Windows 내부 SearXNG 주소를 바꿀 수 있고, 폴백이 필요하면 Tavily API 키를 선택적으로 저장합니다. 키는 OS credential store에만 저장되며, 모든 검색 요청은 React WebView가 아니라 Rust backend에서 전송합니다. Composer에서 검색과 추론 모드를 메시지별로 선택할 수 있습니다. SearXNG 자체에는 검색 API 크레딧 제한이 없지만, 연결된 외부 검색 엔진의 차단이나 속도 제한은 적용될 수 있습니다.
 
 ## 모델 추가
 

@@ -13,6 +13,27 @@ describe("appStorage config migrations", () => {
     expect(appStorage.loadSettings().modelTimeoutMs).toBe(0);
   });
 
+  it("migrates the legacy Tavily-only setting to SearXNG-first fallback", () => {
+    localStorage.setItem(
+      "local-llm.settings.v1",
+      JSON.stringify({ searchProvider: "tavily" }),
+    );
+
+    expect(appStorage.loadSettings()).toMatchObject({
+      searchProvider: "searxng-tavily",
+      searxngBaseUrl: "http://127.0.0.1:8888",
+    });
+  });
+
+  it("preserves an explicit Tavily-only choice after migration", () => {
+    localStorage.setItem(
+      "local-llm.settings.v2",
+      JSON.stringify({ searchProvider: "tavily" }),
+    );
+
+    expect(appStorage.loadSettings().searchProvider).toBe("tavily");
+  });
+
   it("replaces a stale Cyber model definition with the current Ollama model", () => {
     localStorage.setItem(
       "local-llm.models.v1",

@@ -12,6 +12,7 @@ export type ConnectionState =
 export type ModelCategory = "general" | "coding" | "security" | "agent";
 
 export type SearchMode = "off" | "auto" | "on";
+export type SearchProviderMode = "searxng-tavily" | "searxng" | "tavily";
 export type ReasoningMode = "fast" | "normal" | "deep" | "deep-review";
 export type ChatStage = "searching" | "drafting" | "critiquing" | "revising" | "answering";
 
@@ -78,7 +79,8 @@ export interface AppSettings {
   directApiMode: boolean;
   searchMode: SearchMode;
   reasoningMode: ReasoningMode;
-  searchProvider: "tavily";
+  searchProvider: SearchProviderMode;
+  searxngBaseUrl: string;
   searchMaxResults: number;
   searchTimeoutMs: number;
   modelTimeoutMs: number;

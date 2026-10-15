@@ -138,7 +138,7 @@ class MockModelProvider implements ModelProvider {
 }
 
 class MockSearchProvider implements SearchProvider {
-  async search(request: SearchRequest, signal?: AbortSignal): Promise<Citation[]> {
+  async search(request: SearchRequest, _context: ProviderContext, signal?: AbortSignal): Promise<Citation[]> {
     throwIfAborted(signal);
     await sleep(120);
     throwIfAborted(signal);

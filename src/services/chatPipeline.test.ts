@@ -87,6 +87,7 @@ describe("chat pipeline", () => {
 
   it("shows an actionable message when the Tavily credential is missing", async () => {
     const { providers, context } = fixture();
+    context.settings.searchProvider = "tavily";
     providers.search.search = vi.fn(async () => {
       throw new Error("credential error: Tavily API key is not configured");
     });
@@ -100,6 +101,22 @@ describe("chat pipeline", () => {
     expect(warnings).toEqual([
       "Tavily API 키가 설정되지 않아 모델 전용 답변으로 전환했습니다. 설정 → 웹 검색에서 API 키를 등록하세요.",
     ]);
+  });
+
+  it("explains when SearXNG and the optional Tavily fallback are both unavailable", async () => {
+    const { providers, context } = fixture();
+    context.settings.searchProvider = "searxng-tavily";
+    providers.search.search = vi.fn(async () => {
+      throw new Error("SearXNG request failed; Tavily API key is not configured");
+    });
+    let warnings: string[] = [];
+    await runChatPipeline({
+      providers, context, requestId: "request", messages: [{ role: "user", content: "최신 보안 뉴스" }],
+      searchMode: "on", reasoningMode: "normal", signal: new AbortController().signal,
+      onToken: vi.fn(), onStage: vi.fn(), onMetadata: (metadata) => { warnings = metadata.warnings; },
+    });
+
+    expect(warnings[0]).toContain("SearXNG 검색에 실패했고 Tavily 폴백 키도 없어");
   });
 
   it("times out a stalled search and continues with a visible fallback", async () => {

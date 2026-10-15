@@ -3,7 +3,8 @@ import type { AppSettings, Conversation, LaunchCommand, LaunchProfile, ModelInfo
 import type { Workspace } from "../domain/workspace";
 
 const keys = {
-  settings: "local-llm.settings.v1",
+  settings: "local-llm.settings.v2",
+  legacySettings: "local-llm.settings.v1",
   conversations: "local-llm.conversations.v1",
   models: "local-llm.models.v1",
   profiles: "local-llm.profiles.v1",
@@ -25,9 +26,16 @@ function write<T>(key: string, value: T): void {
 
 export const appStorage = {
   loadSettings(): AppSettings {
+    const current = read<Partial<AppSettings> | null>(keys.settings, null);
+    const stored = current ?? read<Partial<AppSettings>>(keys.legacySettings, {});
     return {
       ...defaultSettings,
-      ...read<Partial<AppSettings>>(keys.settings, {}),
+      ...stored,
+      // Tavily was the only legacy option, so move existing installs to the
+      // keyless-first provider without discarding their optional fallback key.
+      searchProvider: current === null && stored.searchProvider === "tavily"
+        ? "searxng-tavily"
+        : (stored.searchProvider ?? defaultSettings.searchProvider),
       // Model generation is user-cancellable and intentionally has no wall-clock limit.
       modelTimeoutMs: 0,
     };
