@@ -696,6 +696,23 @@ fn stop_ssh_tunnel(tunnel_id: String) -> Result<(), BackendError> {
     Ok(())
 }
 
+fn stop_all_ssh_tunnels() {
+    if let Ok(mut tunnels) = SYSTEM_SSH_TUNNELS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+    {
+        for (_, mut child) in tunnels.drain() {
+            child.kill().ok();
+            child.wait().ok();
+        }
+    }
+    if let Ok(mut tunnels) = TUNNELS.get_or_init(|| Mutex::new(HashMap::new())).lock() {
+        for (_, stopped) in tunnels.drain() {
+            stopped.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
 fn runtime_key(connection: &SshConnection, model_id: &str, port: u16) -> String {
     format!(
         "{}:{}:{}:{}",
@@ -1512,8 +1529,13 @@ pub fn run() {
             stream_chat,
             complete_agent
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Local LLM Client");
+        .build(tauri::generate_context!())
+        .expect("error while building Local LLM Client")
+        .run(|_, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                stop_all_ssh_tunnels();
+            }
+        });
 }
 
 #[cfg(test)]
