@@ -59,10 +59,19 @@ export const appStorage = {
       keys.profiles,
       defaultProfiles,
     );
-    return stored.map((profile) => {
+    const migrated = stored.map((profile) => {
       if ("launch" in profile) return profile;
       return { ...profile, launch: migrateCommand(profile.command) } as LaunchProfile;
     });
+    const currentById = new Map(defaultProfiles.map((profile) => [profile.id, profile]));
+    const synchronized = migrated.map((profile) => currentById.get(profile.id) ?? profile);
+    return defaultProfiles.reduce(
+      (profiles, profile) =>
+        profiles.some((candidate) => candidate.id === profile.id)
+          ? profiles
+          : [...profiles, profile],
+      synchronized,
+    );
   },
   loadWorkspaces(): Workspace[] {
     return read<Workspace[]>(keys.workspaces, []);

@@ -43,9 +43,13 @@ export function useAppController() {
     () => conversations.find((item) => item.id === activeConversationId) ?? null,
     [activeConversationId, conversations],
   );
-  const selectedModel = models.find((model) => model.id === selectedModelId) ?? models[0];
-  const selectedProfile =
-    profiles.find((profile) => profile.id === selectedModel?.launchProfileId) ?? defaultProfiles[0];
+  const selectedModel =
+    models.find((model) => model.id === selectedModelId) ??
+    models.find((model) => model.id === defaultModels[2].id) ??
+    models[0];
+  const selectedProfile = profiles.find(
+    (profile) => profile.id === selectedModel?.launchProfileId,
+  );
 
   const log = useCallback((message: string, level: LogEntry["level"] = "info") => {
     setLogs((current) => [
