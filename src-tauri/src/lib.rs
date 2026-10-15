@@ -27,6 +27,7 @@ const SSH_KEY_SERVICE: &str = "local-llm-client.ssh-key";
 const TAVILY_SEARCH_SERVICE: &str = "local-llm-client.search.tavily";
 const MAX_TOOL_OUTPUT: usize = 1024 * 1024;
 const MAX_AGENT_STEP_CONTEXT: usize = 128 * 1024;
+const MAX_MODEL_ERROR_BODY: usize = 4 * 1024;
 static TUNNELS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
 static SYSTEM_SSH_TUNNELS: OnceLock<Mutex<HashMap<String, Child>>> = OnceLock::new();
 static RUNTIMES: OnceLock<Mutex<HashMap<String, RuntimeInstance>>> = OnceLock::new();
@@ -146,8 +147,28 @@ struct ChatRequest {
     base_url: String,
     model: String,
     temperature: f32,
+    max_tokens: u32,
     timeout_ms: u64,
     messages: Vec<ChatMessage>,
+}
+
+async fn model_api_error_message(response: reqwest::Response) -> String {
+    let status = response.status();
+    let mut body = response.text().await.unwrap_or_default();
+    if body.len() > MAX_MODEL_ERROR_BODY {
+        let mut boundary = MAX_MODEL_ERROR_BODY;
+        while !body.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        body.truncate(boundary);
+        body.push_str("...[response truncated]");
+    }
+    let body = body.trim();
+    if body.is_empty() {
+        format!("model API returned {status}")
+    } else {
+        format!("model API returned {status}: {body}")
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1523,6 +1544,7 @@ async fn stream_chat(app: AppHandle, request: ChatRequest) -> Result<(), Backend
             .json(&json!({
                 "model": request.model,
                 "temperature": request.temperature,
+                "max_tokens": request.max_tokens,
                 "messages": request.messages,
                 "stream": true
             }))
@@ -1539,7 +1561,7 @@ async fn stream_chat(app: AppHandle, request: ChatRequest) -> Result<(), Backend
         };
 
         if !response.status().is_success() {
-            let message = format!("model API returned {}", response.status());
+            let message = model_api_error_message(response).await;
             app.emit(&error_event, &message).ok();
             return Err(BackendError::ModelApi(message));
         }
@@ -1608,6 +1630,7 @@ async fn complete_chat(request: ChatRequest) -> Result<String, BackendError> {
             .json(&json!({
                 "model": request.model,
                 "temperature": request.temperature,
+                "max_tokens": request.max_tokens,
                 "messages": request.messages,
                 "stream": false
             }))
@@ -1624,9 +1647,9 @@ async fn complete_chat(request: ChatRequest) -> Result<String, BackendError> {
         };
         let status = response.status();
         if !status.is_success() {
-            return Err(BackendError::ModelApi(format!(
-                "model API returned {status}"
-            )));
+            return Err(BackendError::ModelApi(
+                model_api_error_message(response).await,
+            ));
         }
         let value: serde_json::Value = response
             .json()

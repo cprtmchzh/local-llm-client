@@ -18,6 +18,10 @@ const reasoningFallbackOrder: Record<ReasoningMode, ReasoningMode[]> = {
   "deep-review": ["deep", "normal", "fast"],
 };
 
+const INTERNAL_STAGE_MAX_TOKENS = 3_072;
+const FINAL_STAGE_MAX_TOKENS = 4_096;
+const MAX_INTERMEDIATE_TEXT_CHARS = 12_000;
+
 export interface ChatPipelineOptions {
   providers: ProviderBundle;
   context: ProviderContext;
@@ -165,15 +169,23 @@ function requestFor(
   options: ChatPipelineOptions,
   suffix: string,
   messages: Pick<Message, "role" | "content">[],
+  maxTokens: number,
 ): ChatRequest {
   return {
     requestId: `${options.requestId}:${suffix}`,
     baseUrl: options.providers.connection.apiBaseUrl(options.context),
     model: options.context.model.modelPath,
     temperature: options.context.profile.temperature,
+    maxTokens,
     timeoutMs: options.context.settings.modelTimeoutMs,
     messages,
   };
+}
+
+function compactIntermediateText(value: string): string {
+  if (value.length <= MAX_INTERMEDIATE_TEXT_CHARS) return value;
+  const half = Math.floor(MAX_INTERMEDIATE_TEXT_CHARS / 2);
+  return `${value.slice(0, half)}\n\n[중간 결과가 컨텍스트 보호를 위해 축약됨]\n\n${value.slice(-half)}`;
 }
 
 export async function runChatPipeline(options: ChatPipelineOptions): Promise<ChatPipelineMetadata> {
@@ -236,26 +248,28 @@ export async function runChatPipeline(options: ChatPipelineOptions): Promise<Cha
       options.providers.model.completeChat(requestFor(options, "draft", withStageInstruction(
         sharedMessages,
         "Think deeply and create a complete draft answer. The draft remains internal and is not shown to the user.",
-      )), signal),
+      ), INTERNAL_STAGE_MAX_TOKENS), signal),
     );
+    const compactDraft = compactIntermediateText(draft);
     options.onStage("critiquing");
     const critique = await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
       options.providers.model.completeChat(requestFor(options, "critique", withStageInstruction(
         sharedMessages,
-        `Think deeply and critique the draft for accuracy, completeness, safety, and citation quality. The critique remains internal.\n\nDRAFT:\n${draft}`,
-      )), signal),
+        `Think deeply and critique the draft for accuracy, completeness, safety, and citation quality. The critique remains internal.\n\nDRAFT:\n${compactDraft}`,
+      ), INTERNAL_STAGE_MAX_TOKENS), signal),
     );
+    const compactCritique = compactIntermediateText(critique);
     options.onStage("revising");
     await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
       options.providers.model.streamChat(requestFor(options, "final", withStageInstruction(
         sharedMessages,
-        `Write the final revised answer only. Incorporate valid critique and preserve accurate citations.\n\nDRAFT:\n${draft}\n\nCRITIQUE:\n${critique}`,
-      )), emitToken, signal),
+        `Write the final revised answer only. Incorporate valid critique and preserve accurate citations.\n\nDRAFT:\n${compactDraft}\n\nCRITIQUE:\n${compactCritique}`,
+      ), FINAL_STAGE_MAX_TOKENS), emitToken, signal),
     );
   } else {
     options.onStage("answering");
     await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
-      options.providers.model.streamChat(requestFor(options, "answer", sharedMessages), emitToken, signal),
+      options.providers.model.streamChat(requestFor(options, "answer", sharedMessages, FINAL_STAGE_MAX_TOKENS), emitToken, signal),
     );
   }
   return metadata;

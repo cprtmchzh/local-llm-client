@@ -134,6 +134,7 @@ export interface ChatRequest {
   baseUrl: string;
   model: string;
   temperature: number;
+  maxTokens: number;
   timeoutMs: number;
   messages: Pick<Message, "role" | "content">[];
 }
