@@ -9,7 +9,7 @@ use std::{
     io::{Read, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs, UdpSocket},
     path::{Component, Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
@@ -24,6 +24,7 @@ const SSH_KEY_SERVICE: &str = "local-llm-client.ssh-key";
 const MAX_TOOL_OUTPUT: usize = 1024 * 1024;
 const MAX_AGENT_STEP_CONTEXT: usize = 128 * 1024;
 static TUNNELS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+static SYSTEM_SSH_TUNNELS: OnceLock<Mutex<HashMap<String, Child>>> = OnceLock::new();
 static RUNTIMES: OnceLock<Mutex<HashMap<String, RuntimeInstance>>> = OnceLock::new();
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -531,6 +532,9 @@ async fn start_ssh_tunnel(
     }
     tauri::async_runtime::spawn_blocking(move || {
         open_ssh(&connection)?;
+        if connection.authentication == "key" {
+            return start_system_ssh_tunnel(connection, remote_port);
+        }
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
             .map_err(|error| BackendError::Network(error.to_string()))?;
         let local_port = listener
@@ -581,8 +585,106 @@ async fn start_ssh_tunnel(
     .map_err(|error| BackendError::Network(error.to_string()))?
 }
 
+fn start_system_ssh_tunnel(
+    connection: SshConnection,
+    remote_port: u16,
+) -> Result<TunnelInfo, BackendError> {
+    let reservation = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|error| BackendError::Network(error.to_string()))?;
+    let local_port = reservation
+        .local_addr()
+        .map_err(|error| BackendError::Network(error.to_string()))?
+        .port();
+    drop(reservation);
+
+    let identity = expanded_path(&connection.private_key_path);
+    if connection.username.starts_with('-') || connection.host.starts_with('-') {
+        return Err(BackendError::Configuration(
+            "SSH username and host cannot start with '-'".into(),
+        ));
+    }
+    let target = format!("{}@{}", connection.username, connection.host);
+    let forwarding = format!("127.0.0.1:{local_port}:127.0.0.1:{remote_port}");
+    let ssh_port = connection.port.to_string();
+    let mut child = Command::new("ssh")
+        .args([
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=8",
+            "-o",
+            "ExitOnForwardFailure=yes",
+            "-o",
+            "ServerAliveInterval=15",
+            "-o",
+            "ServerAliveCountMax=2",
+            "-o",
+            "IdentitiesOnly=yes",
+            "-p",
+            &ssh_port,
+            "-i",
+        ])
+        .arg(identity)
+        .args(["-N", "-T", "-L", &forwarding, &target])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| BackendError::Network(format!("failed to start system ssh: {error}")))?;
+
+    let started = Instant::now();
+    loop {
+        if TcpStream::connect(("127.0.0.1", local_port)).is_ok() {
+            break;
+        }
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| BackendError::Network(error.to_string()))?
+        {
+            let mut stderr = String::new();
+            if let Some(mut pipe) = child.stderr.take() {
+                pipe.read_to_string(&mut stderr).ok();
+            }
+            return Err(BackendError::Network(format!(
+                "system ssh tunnel exited with {status}: {}",
+                stderr.trim()
+            )));
+        }
+        if started.elapsed() >= Duration::from_secs(10) {
+            child.kill().ok();
+            child.wait().ok();
+            return Err(BackendError::Network(
+                "system ssh tunnel did not open its local port".into(),
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let id = format!("tunnel-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed));
+    SYSTEM_SSH_TUNNELS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| BackendError::Network("system tunnel registry is unavailable".into()))?
+        .insert(id.clone(), child);
+    Ok(TunnelInfo {
+        id,
+        local_port,
+        remote_port,
+    })
+}
+
 #[tauri::command]
 fn stop_ssh_tunnel(tunnel_id: String) -> Result<(), BackendError> {
+    if let Some(mut child) = SYSTEM_SSH_TUNNELS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|_| BackendError::Network("system tunnel registry is unavailable".into()))?
+        .remove(&tunnel_id)
+    {
+        child.kill().ok();
+        child.wait().ok();
+        return Ok(());
+    }
     let stopped = TUNNELS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
@@ -611,6 +713,34 @@ fn powershell_encoded(script: &str) -> String {
         "powershell.exe -NoProfile -NonInteractive -EncodedCommand {}",
         BASE64.encode(bytes)
     )
+}
+
+fn windows_command_line_quote(value: &str) -> String {
+    if !value.is_empty()
+        && !value
+            .chars()
+            .any(|character| character.is_whitespace() || character == '"')
+    {
+        return value.to_string();
+    }
+    let mut quoted = String::from("\"");
+    let mut backslashes = 0usize;
+    for character in value.chars() {
+        if character == '\\' {
+            backslashes += 1;
+        } else if character == '"' {
+            quoted.push_str(&"\\".repeat(backslashes * 2 + 1));
+            quoted.push('"');
+            backslashes = 0;
+        } else {
+            quoted.push_str(&"\\".repeat(backslashes));
+            backslashes = 0;
+            quoted.push(character);
+        }
+    }
+    quoted.push_str(&"\\".repeat(backslashes * 2));
+    quoted.push('"');
+    quoted
 }
 
 fn unix_timestamp() -> String {
@@ -650,10 +780,15 @@ async fn start_remote_runtime(
         }
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let arguments = args.iter().map(|arg| powershell_quote(arg)).collect::<Vec<_>>().join(",");
+        let command_line = std::iter::once(&executable)
+            .chain(args.iter())
+            .map(|argument| windows_command_line_quote(argument))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let encoded_command_line = BASE64.encode(command_line.as_bytes());
         let script = format!(
-            "$ErrorActionPreference='Stop'; $exe={}; if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {{ throw 'runtime executable not found' }}; $p=Start-Process -FilePath $exe -ArgumentList @({}) -WindowStyle Hidden -PassThru; [Console]::Out.Write($p.Id)",
-            powershell_quote(&executable), arguments
+            "$ErrorActionPreference='Stop'; $exe={}; if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {{ throw 'runtime executable not found' }}; $commandLine=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{}')); $created=Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{CommandLine=$commandLine}}; if ($created.ReturnValue -ne 0) {{ throw \"Win32_Process.Create failed: $($created.ReturnValue)\" }}; $pidToTrack=[uint32]$created.ProcessId; $deadline=(Get-Date).AddSeconds(15); do {{ $listener=Get-NetTCPConnection -LocalPort {} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($listener) {{ $pidToTrack=[uint32]$listener.OwningProcess; break }}; Start-Sleep -Milliseconds 250 }} while ((Get-Date) -lt $deadline); [Console]::Out.Write($pidToTrack)",
+            powershell_quote(&executable), encoded_command_line, port
         );
         let result = execute_ssh_inner(&connection, &powershell_encoded(&script), 30_000)?;
         if result.exit_code != 0 {
@@ -1395,6 +1530,16 @@ mod tests {
     #[test]
     fn quotes_powershell_arguments_without_command_breakout() {
         assert_eq!(powershell_quote("a'b"), "'a''b'");
+    }
+
+    #[test]
+    fn quotes_windows_process_arguments() {
+        assert_eq!(windows_command_line_quote("serve"), "serve");
+        assert_eq!(
+            windows_command_line_quote("C:\\Program Files\\Ollama\\ollama.exe"),
+            "\"C:\\Program Files\\Ollama\\ollama.exe\""
+        );
+        assert_eq!(windows_command_line_quote("a\"b"), "\"a\\\"b\"");
     }
 
     #[test]

@@ -63,6 +63,9 @@ Windows 11 Pro 장비에 비대화형 SSH key 인증으로 연결해 다음을 �
 | Qwen 3.8 Cyber tool calling | PASS | 실제 Cyber Agent 모델이 `list_directory` tool call JSON 반환 |
 | invalid model | PASS | harness가 비정상 모델의 HTTP 실패 확인 |
 | tunnel reconnect | PASS | listener 종료/재생성 후 health 회복 |
+| Native Tauri SSH tunnel | PASS | macOS 앱이 system SSH local forwarding으로 Windows Ollama `/api/tags` HTTP 200 확인 |
+| Ollama cold start | PASS | 11434 리스너 중지 후 앱이 WMI 독립 프로세스로 `ollama serve`를 시작하고 `준비됨` 복구 |
+| Native Cyber chat | PASS | 앱 UI에서 실제 Cyber 27B 스트리밍 응답 `CYBER_READY` 렌더링 |
 | 기본 llama.cpp profile paths | EXPECTED FAIL | 샘플 `C:\\llama.cpp`, `C:\\models`가 장비에 없음 |
 | Windows OFF → WOL | NOT RUN | 현재 장비가 켜져 있고 MAC/broadcast 값이 제공되지 않음 |
 | runtime crash/forced restart | NOT RUN | 실행 중 Ollama는 앱 소유 process가 아니므로 종료하지 않음 |

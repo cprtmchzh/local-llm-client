@@ -57,7 +57,14 @@ describe("appStorage config migrations", () => {
 
     const ollama = appStorage.loadProfiles().find((profile) => profile.id === "ollama-agent");
 
-    expect(ollama).toMatchObject({ runtimeId: "ollama", port: 11434, launch: null });
+    expect(ollama).toMatchObject({
+      runtimeId: "ollama",
+      port: 11434,
+      launch: {
+        executable: "C:\\Users\\bin54\\AppData\\Local\\Programs\\Ollama\\ollama.exe",
+        args: ["serve"],
+      },
+    });
   });
 
   it("moves conversations from the temporary 8B model id to Cyber", () => {

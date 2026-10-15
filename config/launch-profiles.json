@@ -50,7 +50,10 @@
   {
     "id": "ollama-agent",
     "runtimeId": "ollama",
-    "launch": null,
+    "launch": {
+      "executable": "C:\\Users\\bin54\\AppData\\Local\\Programs\\Ollama\\ollama.exe",
+      "args": ["serve"]
+    },
     "port": 11434,
     "healthEndpoint": "/api/tags",
     "apiBaseUrl": "http://{host}:11434/v1",
