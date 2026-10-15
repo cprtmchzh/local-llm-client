@@ -99,6 +99,32 @@ describe("chat pipeline", () => {
     expect(providers.model.streamChat).toHaveBeenCalledOnce();
   });
 
+  it("keeps model generation running without a wall-clock timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const { providers, context } = fixture();
+      context.settings.modelTimeoutMs = 0;
+      providers.model.streamChat = vi.fn((_request, onToken) => new Promise<void>((resolve) => {
+        window.setTimeout(() => {
+          onToken("late answer");
+          resolve();
+        }, 1_000_000);
+      }));
+      const tokens: string[] = [];
+      const result = runChatPipeline({
+        providers, context, requestId: "request", messages: [{ role: "user", content: "long task" }],
+        searchMode: "off", reasoningMode: "normal", signal: new AbortController().signal,
+        onToken: (token) => tokens.push(token), onStage: vi.fn(), onMetadata: vi.fn(),
+      });
+
+      await vi.advanceTimersByTimeAsync(1_000_000);
+      await expect(result).resolves.toBeDefined();
+      expect(tokens).toEqual(["late answer"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("stops before model work when cancelled", async () => {
     const { providers, context } = fixture();
     const controller = new AbortController();

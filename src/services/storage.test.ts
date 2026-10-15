@@ -4,6 +4,15 @@ import { appStorage } from "./storage";
 describe("appStorage config migrations", () => {
   beforeEach(() => localStorage.clear());
 
+  it("migrates existing model response limits to unlimited", () => {
+    localStorage.setItem(
+      "local-llm.settings.v1",
+      JSON.stringify({ modelTimeoutMs: 120_000 }),
+    );
+
+    expect(appStorage.loadSettings().modelTimeoutMs).toBe(0);
+  });
+
   it("replaces a stale Cyber model definition with the current Ollama model", () => {
     localStorage.setItem(
       "local-llm.models.v1",

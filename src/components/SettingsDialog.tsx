@@ -113,7 +113,7 @@ export function SettingsDialog({ initial, onSave, onClose }: SettingsDialogProps
                   <label><span>최대 검색 결과</span><input type="number" min="1" max="10" value={settings.searchMaxResults} onChange={(event) => update("searchMaxResults", Number(event.target.value))} /></label>
                   <label><span>검색 제한 시간 (ms)</span><input type="number" min="1000" max="60000" step="1000" value={settings.searchTimeoutMs} onChange={(event) => update("searchTimeoutMs", Number(event.target.value))} /></label>
                 </div>
-                <label><span>모델 단계 제한 시간 (ms)</span><input type="number" min="5000" max="600000" step="5000" value={settings.modelTimeoutMs} onChange={(event) => update("modelTimeoutMs", Number(event.target.value))} /></label>
+                <div className="info-panel"><strong>모델 응답 시간</strong><p>답변 생성은 시간 제한 없이 계속되며, 작성 중에는 취소 버튼으로 직접 중단할 수 있습니다.</p></div>
                 <div className="info-panel"><strong>보안 저장</strong><p>API 키는 localStorage에 기록되지 않으며 macOS Keychain 또는 Windows Credential Manager에 저장됩니다.</p></div>
               </>
             ) : null}

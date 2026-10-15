@@ -21,7 +21,7 @@ export const defaultSettings: AppSettings = {
   searchProvider: "tavily",
   searchMaxResults: 5,
   searchTimeoutMs: 12_000,
-  modelTimeoutMs: 120_000,
+  modelTimeoutMs: 0,
 };
 
 export const defaultModels = models as ModelInfo[];

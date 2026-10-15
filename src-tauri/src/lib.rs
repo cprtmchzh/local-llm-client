@@ -1434,6 +1434,18 @@ fn clear_cancellation(
     }
 }
 
+fn model_http_client(timeout_ms: u64) -> Result<reqwest::Client, BackendError> {
+    let builder = reqwest::Client::builder().connect_timeout(Duration::from_secs(8));
+    let builder = if timeout_ms == 0 {
+        builder
+    } else {
+        builder.timeout(Duration::from_millis(timeout_ms.clamp(1_000, 600_000)))
+    };
+    builder
+        .build()
+        .map_err(|error| BackendError::ModelApi(error.to_string()))
+}
+
 fn cancel_request(
     registry: &'static OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     request_id: String,
@@ -1471,13 +1483,7 @@ async fn stream_chat(app: AppHandle, request: ChatRequest) -> Result<(), Backend
             "{}/chat/completions",
             request.base_url.trim_end_matches('/')
         );
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(8))
-            .timeout(Duration::from_millis(
-                request.timeout_ms.clamp(1_000, 600_000),
-            ))
-            .build()
-            .map_err(|error| BackendError::ModelApi(error.to_string()))?;
+        let client = model_http_client(request.timeout_ms)?;
         let send = client
             .post(url)
             .json(&json!({
@@ -1559,13 +1565,7 @@ async fn complete_chat(request: ChatRequest) -> Result<String, BackendError> {
             "{}/chat/completions",
             request.base_url.trim_end_matches('/')
         );
-        let client = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(8))
-            .timeout(Duration::from_millis(
-                request.timeout_ms.clamp(1_000, 600_000),
-            ))
-            .build()
-            .map_err(|error| BackendError::ModelApi(error.to_string()))?;
+        let client = model_http_client(request.timeout_ms)?;
         let send = client
             .post(url)
             .json(&json!({

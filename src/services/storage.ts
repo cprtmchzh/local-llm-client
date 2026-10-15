@@ -25,7 +25,12 @@ function write<T>(key: string, value: T): void {
 
 export const appStorage = {
   loadSettings(): AppSettings {
-    return { ...defaultSettings, ...read<Partial<AppSettings>>(keys.settings, {}) };
+    return {
+      ...defaultSettings,
+      ...read<Partial<AppSettings>>(keys.settings, {}),
+      // Model generation is user-cancellable and intentionally has no wall-clock limit.
+      modelTimeoutMs: 0,
+    };
   },
   saveSettings(settings: AppSettings): void {
     write(keys.settings, settings);

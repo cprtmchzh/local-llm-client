@@ -102,10 +102,12 @@ async function runStage<T>(
   let timedOut = false;
   const cancel = () => controller.abort();
   parentSignal.addEventListener("abort", cancel, { once: true });
-  const timer = window.setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeoutMs);
+  const timer = timeoutMs > 0
+    ? window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs)
+    : undefined;
   let rejectAbort: ((reason: AppError) => void) | undefined;
   const abortPromise = new Promise<never>((_, reject) => {
     rejectAbort = reject;
@@ -118,7 +120,7 @@ async function runStage<T>(
     if (controller.signal.aborted) throw abortError(timedOut && !parentSignal.aborted);
     throw error;
   } finally {
-    window.clearTimeout(timer);
+    if (timer !== undefined) window.clearTimeout(timer);
     parentSignal.removeEventListener("abort", cancel);
     controller.signal.removeEventListener("abort", rejectOnAbort);
   }
