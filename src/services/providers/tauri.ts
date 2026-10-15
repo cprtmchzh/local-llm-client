@@ -238,9 +238,21 @@ class TauriModelProvider implements ModelProvider {
   }
 
   async completeChat(request: ChatRequest, signal?: AbortSignal): Promise<string> {
-    // Some OpenAI-compatible local runtimes only implement chat completions
-    // reliably in streaming mode. Reuse the verified streaming path and keep
-    // intermediate Deep Review output in memory instead of exposing it.
+    // Internal Deep Review stages do not need UI streaming. Prefer an atomic
+    // response containing both content and reasoning, then retry through SSE
+    // for runtimes that only implement streaming reliably.
+    try {
+      const result = await invokeWithCancellation<string>(
+        "complete_chat",
+        { request },
+        signal,
+        "cancel_chat",
+        request.requestId,
+      );
+      if (result.trim()) return result;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") throw error;
+    }
     let content = "";
     let reasoning = "";
     await this.streamChatOnce(

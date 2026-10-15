@@ -196,6 +196,15 @@ struct SearxngResult {
     content: String,
 }
 
+fn chat_completion_text(value: &serde_json::Value) -> Option<String> {
+    let message = &value["choices"][0]["message"];
+    ["content", "reasoning", "reasoning_content"]
+        .iter()
+        .filter_map(|field| message[*field].as_str())
+        .find(|text| !text.trim().is_empty())
+        .map(str::to_string)
+}
+
 fn resolve_address(host: &str, port: u16) -> Result<SocketAddr, BackendError> {
     if host.trim().is_empty() {
         return Err(BackendError::Configuration("host is required".into()));
@@ -1623,10 +1632,9 @@ async fn complete_chat(request: ChatRequest) -> Result<String, BackendError> {
             .json()
             .await
             .map_err(|error| BackendError::ModelApi(error.to_string()))?;
-        value["choices"][0]["message"]["content"]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| BackendError::ModelApi("model response did not contain content".into()))
+        chat_completion_text(&value).ok_or_else(|| {
+            BackendError::ModelApi("model response did not contain content or reasoning".into())
+        })
     }
     .await;
     clear_cancellation(&CHAT_CANCELLATIONS, &request_id);
@@ -1972,5 +1980,25 @@ mod tests {
         );
         assert!(searxng_search_url("file:///tmp/search").is_err());
         assert!(searxng_search_url("https://user:pass@example.test").is_err());
+    }
+
+    #[test]
+    fn reads_visible_content_or_internal_reasoning_from_chat_completions() {
+        let visible =
+            json!({"choices": [{"message": {"content": "answer", "reasoning": "analysis"}}]});
+        let reasoning_only =
+            json!({"choices": [{"message": {"content": "", "reasoning": "analysis"}}]});
+        let alternate_reasoning =
+            json!({"choices": [{"message": {"reasoning_content": "analysis"}}]});
+        assert_eq!(chat_completion_text(&visible).as_deref(), Some("answer"));
+        assert_eq!(
+            chat_completion_text(&reasoning_only).as_deref(),
+            Some("analysis")
+        );
+        assert_eq!(
+            chat_completion_text(&alternate_reasoning).as_deref(),
+            Some("analysis")
+        );
+        assert!(chat_completion_text(&json!({"choices": [{"message": {}}]})).is_none());
     }
 }

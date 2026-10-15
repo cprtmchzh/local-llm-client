@@ -231,36 +231,20 @@ export async function runChatPipeline(options: ChatPipelineOptions): Promise<Cha
   ];
 
   if (reasoning.resolved === "deep-review") {
-    let draft: string;
-    let critique: string;
-    try {
-      options.onStage("drafting");
-      draft = await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
-        options.providers.model.completeChat(requestFor(options, "draft", withStageInstruction(
-          sharedMessages,
-          "Think deeply and create a complete draft answer. The draft remains internal and is not shown to the user.",
-        )), signal),
-      );
-      options.onStage("critiquing");
-      critique = await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
-        options.providers.model.completeChat(requestFor(options, "critique", withStageInstruction(
-          sharedMessages,
-          `Think deeply and critique the draft for accuracy, completeness, safety, and citation quality. The critique remains internal.\n\nDRAFT:\n${draft}`,
-        )), signal),
-      );
-    } catch (error) {
-      if (error instanceof AppError && error.code === "REQUEST_CANCELLED") throw error;
-      warnings.push("Deep Review 내부 단계가 본문을 만들지 못해 일반 답변 모드로 자동 전환했습니다.");
-      options.onMetadata(metadata);
-      options.onStage("answering");
-      await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
-        options.providers.model.streamChat(requestFor(options, "deep-review-fallback", withStageInstruction(
-          sharedMessages,
-          "Answer the user with only the polished final conclusion. Do not reveal step-by-step reasoning.",
-        )), emitToken, signal),
-      );
-      return metadata;
-    }
+    options.onStage("drafting");
+    const draft = await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
+      options.providers.model.completeChat(requestFor(options, "draft", withStageInstruction(
+        sharedMessages,
+        "Think deeply and create a complete draft answer. The draft remains internal and is not shown to the user.",
+      )), signal),
+    );
+    options.onStage("critiquing");
+    const critique = await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
+      options.providers.model.completeChat(requestFor(options, "critique", withStageInstruction(
+        sharedMessages,
+        `Think deeply and critique the draft for accuracy, completeness, safety, and citation quality. The critique remains internal.\n\nDRAFT:\n${draft}`,
+      )), signal),
+    );
     options.onStage("revising");
     await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
       options.providers.model.streamChat(requestFor(options, "final", withStageInstruction(
