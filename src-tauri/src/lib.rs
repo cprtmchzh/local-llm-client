@@ -443,31 +443,72 @@ fn bridge_tunnel(
     session.set_blocking(false);
     let mut local_buffer = [0u8; 16 * 1024];
     let mut remote_buffer = [0u8; 16 * 1024];
+    let mut to_remote = Vec::new();
+    let mut to_remote_offset = 0usize;
+    let mut to_local = Vec::new();
+    let mut to_local_offset = 0usize;
+    let mut local_eof = false;
+    let mut remote_eof = false;
     loop {
         let mut progressed = false;
-        match local.read(&mut local_buffer) {
-            Ok(0) => break,
-            Ok(size) => {
-                channel
-                    .write_all(&local_buffer[..size])
-                    .map_err(|error| BackendError::Network(error.to_string()))?;
-                channel.flush().ok();
-                progressed = true;
+
+        if !local_eof && to_remote_offset == to_remote.len() {
+            to_remote.clear();
+            to_remote_offset = 0;
+            match local.read(&mut local_buffer) {
+                Ok(0) => local_eof = true,
+                Ok(size) => {
+                    to_remote.extend_from_slice(&local_buffer[..size]);
+                    progressed = true;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => return Err(BackendError::Network(error.to_string())),
             }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(error) => return Err(BackendError::Network(error.to_string())),
         }
-        match channel.read(&mut remote_buffer) {
-            Ok(0) if channel.eof() => break,
-            Ok(0) => {}
-            Ok(size) => {
-                local
-                    .write_all(&remote_buffer[..size])
-                    .map_err(|error| BackendError::Network(error.to_string()))?;
-                progressed = true;
+
+        if to_remote_offset < to_remote.len() {
+            match channel.write(&to_remote[to_remote_offset..]) {
+                Ok(0) => {}
+                Ok(size) => {
+                    to_remote_offset += size;
+                    progressed = true;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => return Err(BackendError::Network(error.to_string())),
             }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(error) => return Err(BackendError::Network(error.to_string())),
+        }
+
+        if !remote_eof && to_local_offset == to_local.len() {
+            to_local.clear();
+            to_local_offset = 0;
+            match channel.read(&mut remote_buffer) {
+                Ok(0) if channel.eof() => remote_eof = true,
+                Ok(0) => {}
+                Ok(size) => {
+                    to_local.extend_from_slice(&remote_buffer[..size]);
+                    progressed = true;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => return Err(BackendError::Network(error.to_string())),
+            }
+        }
+
+        if to_local_offset < to_local.len() {
+            match local.write(&to_local[to_local_offset..]) {
+                Ok(0) => {}
+                Ok(size) => {
+                    to_local_offset += size;
+                    progressed = true;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => return Err(BackendError::Network(error.to_string())),
+            }
+        }
+
+        let remote_drained = to_remote_offset == to_remote.len();
+        let local_drained = to_local_offset == to_local.len();
+        if (local_eof && remote_drained && local_drained) || (remote_eof && local_drained) {
+            break;
         }
         if !progressed {
             std::thread::sleep(Duration::from_millis(4));
@@ -518,7 +559,9 @@ async fn start_ssh_tunnel(
                             private_key_path: connection.private_key_path.clone(),
                         };
                         std::thread::spawn(move || {
-                            let _ = bridge_tunnel(local, connection, remote_port);
+                            if let Err(error) = bridge_tunnel(local, connection, remote_port) {
+                                eprintln!("SSH tunnel bridge failed: {error}");
+                            }
                         });
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
