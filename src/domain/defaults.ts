@@ -17,7 +17,7 @@ export const defaultSettings: AppSettings = {
   advancedMode: false,
   directApiMode: false,
   searchMode: "auto",
-  reasoningMode: "normal",
+  reasoningMode: "deep-review",
   searchProvider: "searxng-tavily",
   searxngBaseUrl: "http://127.0.0.1:8888",
   searchMaxResults: 5,

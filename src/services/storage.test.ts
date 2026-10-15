@@ -13,6 +13,15 @@ describe("appStorage config migrations", () => {
     expect(appStorage.loadSettings().modelTimeoutMs).toBe(0);
   });
 
+  it("locks existing installs to Deep Review", () => {
+    localStorage.setItem(
+      "local-llm.settings.v2",
+      JSON.stringify({ reasoningMode: "fast" }),
+    );
+
+    expect(appStorage.loadSettings().reasoningMode).toBe("deep-review");
+  });
+
   it("migrates the legacy Tavily-only setting to SearXNG-first fallback", () => {
     localStorage.setItem(
       "local-llm.settings.v1",

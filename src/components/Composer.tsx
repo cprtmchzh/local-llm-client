@@ -77,10 +77,7 @@ export function Composer({
             <label title="추론 모드">
               <Brain size={13} aria-hidden="true" />
               <span className="sr-only">추론 모드</span>
-              <select value={reasoningMode} disabled={isStreaming} onChange={(event) => onReasoningModeChange(event.target.value as ReasoningMode)}>
-                <option value="fast">빠르게</option>
-                <option value="normal">일반</option>
-                <option value="deep">깊게</option>
+              <select value={reasoningMode} disabled onChange={(event) => onReasoningModeChange(event.target.value as ReasoningMode)}>
                 <option value="deep-review">깊게 + 검토</option>
               </select>
             </label>

@@ -36,6 +36,9 @@ export const appStorage = {
       searchProvider: current === null && stored.searchProvider === "tavily"
         ? "searxng-tavily"
         : (stored.searchProvider ?? defaultSettings.searchProvider),
+      // This client intentionally runs every answer through deep reasoning and
+      // exposes only the polished final result.
+      reasoningMode: "deep-review",
       // Model generation is user-cancellable and intentionally has no wall-clock limit.
       modelTimeoutMs: 0,
     };

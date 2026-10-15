@@ -486,11 +486,9 @@ async fn execute_ssh(
 async fn install_windows_searxng(connection: SshConnection) -> Result<ShellResult, BackendError> {
     let script = include_str!("../../scripts/windows-start-searxng.ps1");
     let command = powershell_encoded(script);
-    tauri::async_runtime::spawn_blocking(move || {
-        execute_ssh_inner(&connection, &command, 180_000)
-    })
-    .await
-    .map_err(|error| BackendError::Command(error.to_string()))?
+    tauri::async_runtime::spawn_blocking(move || execute_ssh_inner(&connection, &command, 180_000))
+        .await
+        .map_err(|error| BackendError::Command(error.to_string()))?
 }
 
 fn bridge_tunnel(
@@ -1503,6 +1501,7 @@ async fn stream_chat(app: AppHandle, request: ChatRequest) -> Result<(), Backend
     let flag = cancellation_flag(&CHAT_CANCELLATIONS, &request_id)?;
     let result = async {
         let token_event = format!("chat://token/{}", request.request_id);
+        let reasoning_event = format!("chat://reasoning/{}", request.request_id);
         let done_event = format!("chat://done/{}", request.request_id);
         let error_event = format!("chat://error/{}", request.request_id);
         let url = format!(
@@ -1564,6 +1563,9 @@ async fn stream_chat(app: AppHandle, request: ChatRequest) -> Result<(), Backend
                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
                     if let Some(token) = value["choices"][0]["delta"]["content"].as_str() {
                         app.emit(&token_event, token).ok();
+                    }
+                    if let Some(token) = value["choices"][0]["delta"]["reasoning"].as_str() {
+                        app.emit(&reasoning_event, token).ok();
                     }
                 }
             }

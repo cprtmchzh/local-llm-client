@@ -169,9 +169,10 @@ class TauriRuntimeProvider implements RuntimeProvider {
 class TauriModelProvider implements ModelProvider {
   constructor(private readonly connection: TauriConnectionProvider) {}
 
-  private visibleOutputRequest(request: ChatRequest): ChatRequest {
+  private visibleOutputRequest(request: ChatRequest, reasoning: string): ChatRequest {
     const messages = [...request.messages];
-    const instruction = "Return visible final text immediately. Do not emit reasoning-only output. /no_think";
+    const summarizedReasoning = reasoning.slice(-32_000);
+    const instruction = `The previous pass completed its internal analysis but did not produce a visible answer. Use that analysis to write only the polished final conclusion. Do not reveal or quote the step-by-step reasoning.\n\nINTERNAL ANALYSIS:\n${summarizedReasoning}`;
     if (messages[0]?.role === "system") {
       messages[0] = { ...messages[0], content: `${messages[0].content}\n\n${instruction}` };
     } else {
@@ -186,19 +187,26 @@ class TauriModelProvider implements ModelProvider {
 
   async streamChat(request: ChatRequest, onToken: (token: string) => void, signal?: AbortSignal): Promise<void> {
     let visibleContent = "";
+    let reasoning = "";
     const emitVisible = (token: string) => {
       visibleContent += token;
       onToken(token);
     };
-    await this.streamChatOnce(request, emitVisible, signal);
+    await this.streamChatOnce(request, emitVisible, (token) => { reasoning += token; }, signal);
     if (visibleContent.trim()) return;
-    await this.streamChatOnce(this.visibleOutputRequest(request), emitVisible, signal);
+    await this.streamChatOnce(this.visibleOutputRequest(request, reasoning), emitVisible, () => undefined, signal);
     if (!visibleContent.trim()) throw new Error("model response did not contain visible content");
   }
 
-  private async streamChatOnce(request: ChatRequest, onToken: (token: string) => void, signal?: AbortSignal): Promise<void> {
+  private async streamChatOnce(
+    request: ChatRequest,
+    onToken: (token: string) => void,
+    onReasoning: (token: string) => void,
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (signal?.aborted) throw cancelled();
     const tokenEvent = `chat://token/${request.requestId}`;
+    const reasoningEvent = `chat://reasoning/${request.requestId}`;
     const doneEvent = `chat://done/${request.requestId}`;
     const errorEvent = `chat://error/${request.requestId}`;
     await new Promise<void>((resolve, reject) => {
@@ -214,6 +222,7 @@ class TauriModelProvider implements ModelProvider {
       cleanups.push(() => signal?.removeEventListener("abort", abort));
       Promise.all([
         listen<string>(tokenEvent, (event) => onToken(event.payload)),
+        listen<string>(reasoningEvent, (event) => onReasoning(event.payload)),
         listen(doneEvent, () => { cleanup(); resolve(); }),
         listen<string>(errorEvent, (event) => { cleanup(); reject(new Error(event.payload)); }),
       ]).then((unlisteners) => {
@@ -233,11 +242,16 @@ class TauriModelProvider implements ModelProvider {
     // reliably in streaming mode. Reuse the verified streaming path and keep
     // intermediate Deep Review output in memory instead of exposing it.
     let content = "";
-    await this.streamChat(request, (token) => {
-      content += token;
-    }, signal);
-    if (!content.trim()) throw new Error("model response did not contain visible content");
-    return content;
+    let reasoning = "";
+    await this.streamChatOnce(
+      request,
+      (token) => { content += token; },
+      (token) => { reasoning += token; },
+      signal,
+    );
+    const result = content.trim() ? content : reasoning;
+    if (!result.trim()) throw new Error("model response did not contain content or reasoning");
+    return result;
   }
 
   async completeAgent(context: ProviderContext, task: string, steps: unknown[], tools: unknown[]): Promise<AgentResponse> {

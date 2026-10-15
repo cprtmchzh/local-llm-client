@@ -11,8 +11,8 @@
 - SSH local port forwarding을 통한 health/SSE 접근(Direct LAN은 debug opt-in)
 - process ownership/PID 기반 runtime lifecycle과 typed executable/argv launch profile
 - llama.cpp, Ollama 및 OpenAI-compatible API health check/SSE chat
-- SearXNG 우선/Tavily 선택 폴백 Web Search `off/auto/on`, 모델별 `fast/normal/deep/deep-review` 추론 모드
-- 검색 근거 주입, inline citation/출처 UI, Draft → Critique → Final Revision 파이프라인
+- SearXNG 우선/Tavily 선택 폴백 Web Search `off/auto/on`, 네이티브 thinking을 사용하는 고정 Deep Review 모드
+- 검색 근거 주입, inline citation/출처 UI, 내부 reasoning 기반 Draft → Critique → Final Revision 파이프라인(화면에는 최종 결과만 표시)
 - 단계별 timeout/cancel 및 검색 실패 시 model-only fallback
 - Workspace/recent workspace, 경계 검증, read/search/metadata/atomic patch 도구
 - AgentOrchestrator, Qwen/OpenAI tool-call adapter, budget/cancel/approval policy

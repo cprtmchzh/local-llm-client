@@ -9,7 +9,7 @@ function renderComposer(overrides: Partial<Parameters<typeof Composer>[0]> = {})
     isStreaming: false,
     modelControl: <button type="button">Model</button>,
     searchMode: "auto",
-    reasoningMode: "normal",
+    reasoningMode: "deep-review",
     onSend: vi.fn(),
     onCancel: vi.fn(),
     onSearchModeChange: vi.fn(),
@@ -21,13 +21,14 @@ function renderComposer(overrides: Partial<Parameters<typeof Composer>[0]> = {})
 }
 
 describe("Composer", () => {
-  it("exposes search and reasoning mode controls", async () => {
+  it("exposes search control and locks reasoning to Deep Review", async () => {
     const user = userEvent.setup();
     const props = renderComposer();
     await user.selectOptions(screen.getByLabelText("웹 검색"), "on");
-    await user.selectOptions(screen.getByLabelText("추론 모드"), "deep-review");
     expect(props.onSearchModeChange).toHaveBeenCalledWith("on");
-    expect(props.onReasoningModeChange).toHaveBeenCalledWith("deep-review");
+    expect(screen.getByLabelText("추론 모드")).toBeDisabled();
+    expect(screen.getByRole("option", { name: "깊게 + 검토" })).toBeInTheDocument();
+    expect(props.onReasoningModeChange).not.toHaveBeenCalled();
   });
 
   it("turns the submit button into an active cancellation control", async () => {

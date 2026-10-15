@@ -238,14 +238,14 @@ export async function runChatPipeline(options: ChatPipelineOptions): Promise<Cha
       draft = await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
         options.providers.model.completeChat(requestFor(options, "draft", withStageInstruction(
           sharedMessages,
-          "Create a complete draft answer. Return visible draft text only. /no_think",
+          "Think deeply and create a complete draft answer. The draft remains internal and is not shown to the user.",
         )), signal),
       );
       options.onStage("critiquing");
       critique = await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
         options.providers.model.completeChat(requestFor(options, "critique", withStageInstruction(
           sharedMessages,
-          `Critique the draft for accuracy, completeness, safety, and citation quality. Return visible actionable critique only. /no_think\n\nDRAFT:\n${draft}`,
+          `Think deeply and critique the draft for accuracy, completeness, safety, and citation quality. The critique remains internal.\n\nDRAFT:\n${draft}`,
         )), signal),
       );
     } catch (error) {
@@ -256,7 +256,7 @@ export async function runChatPipeline(options: ChatPipelineOptions): Promise<Cha
       await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
         options.providers.model.streamChat(requestFor(options, "deep-review-fallback", withStageInstruction(
           sharedMessages,
-          "Answer the user directly with visible final text. /no_think",
+          "Answer the user with only the polished final conclusion. Do not reveal step-by-step reasoning.",
         )), emitToken, signal),
       );
       return metadata;

@@ -186,7 +186,7 @@ export function useAppController() {
           requestId: assistantMessage.id,
           messages: baseMessages.map(({ role, content: messageContent }) => ({ role, content: messageContent })),
           searchMode: settings.searchMode,
-          reasoningMode: settings.reasoningMode,
+          reasoningMode: "deep-review",
           signal: controller.signal,
           onToken: (token) =>
             persistConversations((items) =>
