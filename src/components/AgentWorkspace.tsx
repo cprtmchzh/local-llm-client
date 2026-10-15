@@ -5,12 +5,14 @@ import {
   FolderOpen,
   History,
   LoaderCircle,
+  PanelLeftClose,
+  PanelLeftOpen,
   Play,
   RotateCcw,
   Square,
   X,
 } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import type { AgentRun, AgentStatus, ApprovalRequest } from "../domain/agent";
 import type { FileMetadata, Workspace } from "../domain/workspace";
 
@@ -22,6 +24,7 @@ interface AgentWorkspaceProps {
   approval: ApprovalRequest | null;
   error: string | null;
   isStarting: boolean;
+  modelControl: ReactNode;
   diffDecisions: Record<string, "accepted" | "reverted">;
   onOpen: (path: string) => void;
   onSelect: (workspace: Workspace) => void;
@@ -54,6 +57,7 @@ export function AgentWorkspace({
   approval,
   error,
   isStarting,
+  modelControl,
   diffDecisions,
   onOpen,
   onSelect,
@@ -65,6 +69,7 @@ export function AgentWorkspace({
 }: AgentWorkspaceProps) {
   const [path, setPath] = useState("");
   const [task, setTask] = useState("");
+  const [explorerOpen, setExplorerOpen] = useState(() => !activeWorkspace);
   const busy = isStarting || Boolean(run && !completedStatuses.includes(run.status));
   const diffs = run?.steps.flatMap((step) =>
     step.toolResult?.metadata.diff ? [{ id: step.id, diff: step.toolResult.metadata.diff }] : [],
@@ -76,9 +81,32 @@ export function AgentWorkspace({
     if (trimmedTask) onStart(trimmedTask);
   };
 
+  useEffect(() => {
+    const toggleExplorer = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "e") {
+        event.preventDefault();
+        setExplorerOpen((open) => !open);
+      }
+    };
+
+    document.addEventListener("keydown", toggleExplorer);
+    return () => document.removeEventListener("keydown", toggleExplorer);
+  }, []);
+
   return (
-    <main className="agent-shell">
-      <aside className="agent-navigator" aria-label="Agent 탐색기">
+    <main className={`agent-shell${explorerOpen ? " explorer-open" : ""}`}>
+      {explorerOpen ? <aside className="agent-navigator" aria-label="Agent 탐색기">
+        <div className="agent-navigator-toolbar">
+          <strong>프로젝트 탐색기</strong>
+          <button
+            type="button"
+            aria-label="프로젝트 탐색기 닫기"
+            title="프로젝트 탐색기 닫기 (⌘⇧E)"
+            onClick={() => setExplorerOpen(false)}
+          >
+            <PanelLeftClose size={16} aria-hidden="true" />
+          </button>
+        </div>
         <section>
           <div className="agent-section-heading">
             <h3><Folder size={13} aria-hidden="true" /> 프로젝트</h3>
@@ -88,7 +116,10 @@ export function AgentWorkspace({
             className="workspace-open"
             onSubmit={(event) => {
               event.preventDefault();
-              if (path.trim()) onOpen(path.trim());
+              if (path.trim()) {
+                onOpen(path.trim());
+                setExplorerOpen(false);
+              }
             }}
           >
             <input
@@ -108,7 +139,10 @@ export function AgentWorkspace({
                 className={workspace.id === activeWorkspace?.id ? "active" : ""}
                 key={workspace.id}
                 title={workspace.rootPath}
-                onClick={() => onSelect(workspace)}
+                onClick={() => {
+                  onSelect(workspace);
+                  setExplorerOpen(false);
+                }}
               >
                 <Folder size={14} aria-hidden="true" />
                 <span>{workspace.name}</span>
@@ -150,14 +184,26 @@ export function AgentWorkspace({
             <p>아직 실행 기록이 없습니다.</p>
           )}
         </section>
-      </aside>
+      </aside> : null}
 
       <section className="agent-main">
         <header className="agent-header">
-          <div className="agent-title">
-            <p className="eyebrow">LOCAL AGENT</p>
-            <h2>{activeWorkspace?.name ?? "Workspace를 여세요"}</h2>
-            {activeWorkspace ? <p className="agent-path" title={activeWorkspace.rootPath}>{activeWorkspace.rootPath}</p> : null}
+          <div className="agent-header-leading">
+            <button
+              type="button"
+              className="agent-panel-toggle"
+              aria-label={explorerOpen ? "프로젝트 탐색기 닫기" : "프로젝트 탐색기 열기"}
+              aria-pressed={explorerOpen}
+              title={`${explorerOpen ? "프로젝트 탐색기 닫기" : "프로젝트 탐색기 열기"} (⌘⇧E)`}
+              onClick={() => setExplorerOpen((open) => !open)}
+            >
+              {explorerOpen ? <PanelLeftClose size={17} aria-hidden="true" /> : <PanelLeftOpen size={17} aria-hidden="true" />}
+            </button>
+            <div className="agent-title">
+              <p className="eyebrow">LOCAL AGENT</p>
+              <h2>{activeWorkspace?.name ?? "Workspace를 여세요"}</h2>
+              {activeWorkspace ? <p className="agent-path" title={activeWorkspace.rootPath}>{activeWorkspace.rootPath}</p> : null}
+            </div>
           </div>
           {busy ? (
             <button type="button" className="stop-agent" onClick={onStop}>
@@ -229,20 +275,25 @@ export function AgentWorkspace({
         ) : null}
 
         <form className="agent-composer" onSubmit={submit}>
-          <div className="agent-composer-input">
-            <textarea
-              rows={2}
-              aria-label="Agent 작업"
-              placeholder={activeWorkspace ? "Agent에게 작업을 설명하세요" : "먼저 Workspace를 열어주세요"}
-              disabled={!activeWorkspace || busy}
-              value={task}
-              onChange={(event) => setTask(event.target.value)}
-            />
-            <span>{busy ? "작업을 처리하고 있습니다" : "작업 범위와 원하는 결과를 구체적으로 입력하세요"}</span>
+          <div className="agent-composer-row">
+            <div className="agent-composer-input">
+              <textarea
+                rows={2}
+                aria-label="Agent 작업"
+                placeholder={activeWorkspace ? "Agent에게 작업을 설명하세요" : "먼저 Workspace를 열어주세요"}
+                disabled={!activeWorkspace || busy}
+                value={task}
+                onChange={(event) => setTask(event.target.value)}
+              />
+            </div>
+            <button type="submit" disabled={!activeWorkspace || busy || !task.trim()}>
+              <Play size={15} aria-hidden="true" /> 실행
+            </button>
           </div>
-          <button type="submit" disabled={!activeWorkspace || busy || !task.trim()}>
-            <Play size={15} aria-hidden="true" /> 실행
-          </button>
+          <footer className="agent-composer-footer">
+            {modelControl}
+            <span>{busy ? "작업을 처리하고 있습니다" : "작업 범위와 원하는 결과를 구체적으로 입력하세요"}</span>
+          </footer>
         </form>
       </section>
     </main>

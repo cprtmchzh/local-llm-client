@@ -1,5 +1,5 @@
 import { ArrowRight, Code2, ShieldCheck, Zap } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import type { AppError, Conversation, ModelInfo } from "../domain/types";
 import { AppIcon } from "./AppIcon";
 import { Composer } from "./Composer";
@@ -10,6 +10,7 @@ interface ChatViewProps {
   model: ModelInfo;
   error: AppError | null;
   isStreaming: boolean;
+  modelControl: ReactNode;
   onSend: (content: string) => void;
   onRetry: () => void;
   onOpenSettings: () => void;
@@ -26,6 +27,7 @@ export function ChatView({
   model,
   error,
   isStreaming,
+  modelControl,
   onSend,
   onRetry,
   onOpenSettings,
@@ -84,7 +86,7 @@ export function ChatView({
       <Composer
         disabled={isStreaming}
         isStreaming={isStreaming}
-        modelName={model.name}
+        modelControl={modelControl}
         onSend={onSend}
       />
     </main>

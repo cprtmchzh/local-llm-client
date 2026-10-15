@@ -20,6 +20,14 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
   const [mode, setMode] = useState<"chat" | "agent">("chat");
+  const modelControl = (
+    <ModelSelector
+      models={app.models}
+      selectedId={app.selectedModelId}
+      disabled={app.isStreaming}
+      onSelect={app.selectModel}
+    />
+  );
 
   const saveSettings = async (settings: AppSettings, password: string) => {
     if (password && isTauri()) {
@@ -63,12 +71,14 @@ export default function App() {
                 <Bot size={14} aria-hidden="true" /> Agent
               </button>
             </div>
-            <ModelSelector
-              models={app.models}
-              selectedId={app.selectedModelId}
-              disabled={app.isStreaming}
-              onSelect={app.selectModel}
-            />
+            <div className="topbar-context">
+              <strong>
+                {mode === "chat"
+                  ? app.activeConversation?.title ?? "새 대화"
+                  : agent.activeWorkspace?.name ?? "Local Agent"}
+              </strong>
+              <small>{mode === "chat" ? "로컬 대화" : "로컬 작업 공간"}</small>
+            </div>
           </div>
           <div className="topbar-actions">
             {app.settings.mockMode ? <span className="mock-badge">MOCK</span> : null}
@@ -85,6 +95,7 @@ export default function App() {
           onSend={(content) => void app.sendMessage(content)}
           onRetry={() => void app.prepare()}
           onOpenSettings={() => setSettingsOpen(true)}
+          modelControl={modelControl}
         /> : (
           <AgentWorkspace
             workspaces={agent.workspaces}
@@ -95,6 +106,7 @@ export default function App() {
             error={agent.error}
             isStarting={agent.isStarting}
             diffDecisions={agent.diffDecisions}
+            modelControl={modelControl}
             onOpen={(path) => void agent.openWorkspace(path)}
             onSelect={(workspace) => void agent.selectWorkspace(workspace)}
             onStart={(task) => void agent.start(task)}
