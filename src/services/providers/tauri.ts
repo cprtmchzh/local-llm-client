@@ -151,6 +151,13 @@ class TauriRuntimeProvider implements RuntimeProvider {
   }
 
   async stop(context: ProviderContext): Promise<void> {
+    if (context.profile.runtimeId === "ollama") {
+      await invoke("unload_ollama_model", {
+        baseUrl: this.connection.apiBaseUrl(context),
+        model: context.model.modelPath,
+      });
+      return;
+    }
     const instance = await this.instance(context);
     if (!instance?.ownedByApp) return;
     await invoke("stop_remote_runtime", { connection: connectionArgs(context), pid: instance.pid, modelId: instance.modelId, port: instance.port });
@@ -187,6 +194,14 @@ class TauriModelProvider implements ModelProvider {
   }
 
   async isHealthy(context: ProviderContext): Promise<boolean> {
+    if (context.profile.runtimeId === "ollama" && context.model.baseModelPath) {
+      await invoke("ensure_ollama_model", {
+        baseUrl: this.connection.apiBaseUrl(context),
+        model: context.model.modelPath,
+        fromModel: context.model.baseModelPath,
+        contextSize: context.profile.contextSize,
+      });
+    }
     return invoke<boolean>("check_http_health", { url: `${this.connection.apiBaseUrl(context).replace(/\/v1$/, "")}${context.profile.healthEndpoint}`, timeoutMs: 2_000 });
   }
 

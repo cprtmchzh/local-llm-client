@@ -26,6 +26,7 @@ export interface ModelInfo {
   category: ModelCategory;
   runtimeId: string;
   modelPath: string;
+  baseModelPath?: string;
   contextLength: number;
   launchProfileId: string;
   description: string;

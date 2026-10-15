@@ -65,8 +65,10 @@ describe("appStorage config migrations", () => {
     expect(cyber).toMatchObject({
       runtimeId: "ollama",
       launchProfileId: "ollama-agent",
-      modelPath:
+      modelPath: "local-llm-qwen-cyber-27b:8k",
+      baseModelPath:
         "hf.co/0xSojalSec/Qwen3.8-27B-Uncensored-Cyber-agent:IQ4_XS-imatrix-fromq8",
+      contextLength: 8192,
     });
   });
 
@@ -99,6 +101,7 @@ describe("appStorage config migrations", () => {
     expect(ollama).toMatchObject({
       runtimeId: "ollama",
       port: 11434,
+      contextSize: 8192,
       launch: {
         executable: "C:\\Users\\bin54\\AppData\\Local\\Programs\\Ollama\\ollama.exe",
         args: ["serve"],

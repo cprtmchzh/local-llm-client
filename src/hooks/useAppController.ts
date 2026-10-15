@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { defaultModels, defaultProfiles } from "../domain/defaults";
 import { canTransition } from "../domain/connectionMachine";
+import { modelToUnloadAfterConversationRemoval } from "../domain/modelResourcePolicy";
 import {
   AppError,
   type AppSettings,
@@ -330,10 +331,28 @@ export function useAppController() {
 
   const removeConversation = useCallback(
     (id: string) => {
+      const modelIdToUnload = modelToUnloadAfterConversationRemoval(conversations, id);
       persistConversations((items) => items.filter((item) => item.id !== id));
-      if (activeConversationId === id) setActiveConversationId(null);
+      if (activeConversationId === id) {
+        chatAbortRef.current?.abort();
+        setActiveConversationId(null);
+      }
+      if (!modelIdToUnload) return;
+
+      const model = models.find((item) => item.id === modelIdToUnload);
+      const profile = profiles.find((item) => item.id === model?.launchProfileId);
+      if (!model || !profile) return;
+      const unloadContext: ProviderContext = { settings, model, profile };
+      if (preparedContextRef.current?.model.id === modelIdToUnload) {
+        preparedContextRef.current = null;
+        setConnectionState("offline");
+      }
+      void getProviders(settings).runtime.stop(unloadContext).then(
+        () => log(`Model ${modelIdToUnload} unloaded after its last conversation was deleted`),
+        (caught) => log(`Model unload failed: ${caught instanceof Error ? caught.message : String(caught)}`, "warn"),
+      );
     },
-    [activeConversationId, persistConversations],
+    [activeConversationId, conversations, log, models, persistConversations, profiles, settings],
   );
 
   const selectConversation = useCallback(

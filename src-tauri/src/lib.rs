@@ -1480,6 +1480,125 @@ async fn check_http_health(url: String, timeout_ms: u64) -> Result<bool, Backend
         .unwrap_or(false))
 }
 
+fn local_ollama_api_root(base_url: &str) -> Result<String, BackendError> {
+    let mut url = reqwest::Url::parse(base_url)
+        .map_err(|error| BackendError::Configuration(format!("invalid Ollama URL: {error}")))?;
+    let is_loopback = matches!(url.host_str(), Some("127.0.0.1" | "localhost"));
+    if url.scheme() != "http"
+        || !is_loopback
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(BackendError::Configuration(
+            "Ollama model management must use the local SSH tunnel".into(),
+        ));
+    }
+    url.set_path("");
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.as_str().trim_end_matches('/').to_string())
+}
+
+fn ollama_show_has_context(show: &serde_json::Value, context_size: u32) -> bool {
+    let expected = context_size.to_string();
+    [show.get("parameters"), show.get("modelfile")]
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .any(|value| {
+            let fields = value.split_whitespace().collect::<Vec<_>>();
+            fields
+                .windows(2)
+                .any(|pair| pair[0].eq_ignore_ascii_case("num_ctx") && pair[1] == expected)
+        })
+}
+
+#[tauri::command]
+async fn ensure_ollama_model(
+    base_url: String,
+    model: String,
+    from_model: String,
+    context_size: u32,
+) -> Result<(), BackendError> {
+    if model.trim().is_empty() || from_model.trim().is_empty() {
+        return Err(BackendError::Configuration(
+            "Ollama model names cannot be empty".into(),
+        ));
+    }
+    if !(1_024..=262_144).contains(&context_size) {
+        return Err(BackendError::Configuration(
+            "Ollama context size is outside the supported range".into(),
+        ));
+    }
+    let root = local_ollama_api_root(&base_url)?;
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(8))
+        .timeout(Duration::from_secs(600))
+        .build()
+        .map_err(|error| BackendError::Network(error.to_string()))?;
+
+    if let Ok(response) = client
+        .post(format!("{root}/api/show"))
+        .json(&json!({ "model": model }))
+        .send()
+        .await
+    {
+        if response.status().is_success() {
+            let show = response
+                .json::<serde_json::Value>()
+                .await
+                .map_err(|error| BackendError::ModelApi(error.to_string()))?;
+            if ollama_show_has_context(&show, context_size) {
+                return Ok(());
+            }
+        }
+    }
+
+    let response = client
+        .post(format!("{root}/api/create"))
+        .json(&json!({
+            "model": model,
+            "from": from_model,
+            "parameters": { "num_ctx": context_size },
+            "stream": false
+        }))
+        .send()
+        .await
+        .map_err(|error| BackendError::ModelApi(error.to_string()))?;
+    if !response.status().is_success() {
+        return Err(BackendError::ModelApi(
+            model_api_error_message(response).await,
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn unload_ollama_model(base_url: String, model: String) -> Result<(), BackendError> {
+    if model.trim().is_empty() {
+        return Err(BackendError::Configuration(
+            "Ollama model name cannot be empty".into(),
+        ));
+    }
+    let root = local_ollama_api_root(&base_url)?;
+    let response = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(8))
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|error| BackendError::Network(error.to_string()))?
+        .post(format!("{root}/api/generate"))
+        .json(&json!({ "model": model, "keep_alive": 0, "stream": false }))
+        .send()
+        .await
+        .map_err(|error| BackendError::ModelApi(error.to_string()))?;
+    if !response.status().is_success() {
+        return Err(BackendError::ModelApi(
+            model_api_error_message(response).await,
+        ));
+    }
+    Ok(())
+}
+
 fn cancellation_flag(
     registry: &'static OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>>,
     request_id: &str,
@@ -1939,6 +2058,8 @@ pub fn run() {
             revert_workspace_patch,
             execute_workspace_shell,
             check_http_health,
+            ensure_ollama_model,
+            unload_ollama_model,
             stream_chat,
             complete_chat,
             cancel_chat,
@@ -1958,6 +2079,26 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalizes_only_local_ollama_tunnel_urls() {
+        assert_eq!(
+            local_ollama_api_root("http://127.0.0.1:63935/v1").unwrap(),
+            "http://127.0.0.1:63935"
+        );
+        assert!(local_ollama_api_root("https://127.0.0.1:63935/v1").is_err());
+        assert!(local_ollama_api_root("http://192.168.0.10:11434/v1").is_err());
+    }
+
+    #[test]
+    fn detects_ollama_context_parameter() {
+        let show = json!({
+            "parameters": "temperature 0.2\nnum_ctx 8192",
+            "modelfile": "FROM base"
+        });
+        assert!(ollama_show_has_context(&show, 8192));
+        assert!(!ollama_show_has_context(&show, 4096));
+    }
 
     #[test]
     fn rejects_workspace_parent_traversal() {
