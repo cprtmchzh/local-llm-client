@@ -148,6 +148,17 @@ function sourceContext(citations: Citation[]): Pick<Message, "role" | "content">
   }];
 }
 
+function withStageInstruction(
+  messages: Pick<Message, "role" | "content">[],
+  instruction: string,
+): Pick<Message, "role" | "content">[] {
+  const [first, ...rest] = messages;
+  if (first?.role === "system") {
+    return [{ ...first, content: `${first.content}\n\n${instruction}` }, ...rest];
+  }
+  return [{ role: "system", content: instruction }, ...messages];
+}
+
 function requestFor(
   options: ChatPipelineOptions,
   suffix: string,
@@ -195,33 +206,38 @@ export async function runChatPipeline(options: ChatPipelineOptions): Promise<Cha
 
   const metadata = { citations, warnings, reasoning };
   options.onMetadata(metadata);
-  const sharedMessages = [
-    ...sourceContext(citations),
-    { role: "system" as const, content: reasoningInstruction(reasoning.resolved) },
+  const sharedMessages: Pick<Message, "role" | "content">[] = [
+    {
+      role: "system",
+      content: [
+        ...sourceContext(citations).map((message) => message.content),
+        reasoningInstruction(reasoning.resolved),
+      ].join("\n\n"),
+    },
     ...options.messages,
   ];
 
   if (reasoning.resolved === "deep-review") {
     options.onStage("drafting");
     const draft = await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
-      options.providers.model.completeChat(requestFor(options, "draft", [
-        ...sharedMessages,
-        { role: "system", content: "Create a complete draft answer. Return the draft only." },
-      ]), signal),
+      options.providers.model.completeChat(requestFor(options, "draft", withStageInstruction(
+        sharedMessages,
+        "Create a complete draft answer. Return the draft only.",
+      )), signal),
     );
     options.onStage("critiquing");
     const critique = await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
-      options.providers.model.completeChat(requestFor(options, "critique", [
-        ...sharedMessages,
-        { role: "system", content: `Critique the draft for accuracy, completeness, safety, and citation quality. Return actionable critique only.\n\nDRAFT:\n${draft}` },
-      ]), signal),
+      options.providers.model.completeChat(requestFor(options, "critique", withStageInstruction(
+        sharedMessages,
+        `Critique the draft for accuracy, completeness, safety, and citation quality. Return actionable critique only.\n\nDRAFT:\n${draft}`,
+      )), signal),
     );
     options.onStage("revising");
     await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
-      options.providers.model.streamChat(requestFor(options, "final", [
-        ...sharedMessages,
-        { role: "system", content: `Write the final revised answer only. Incorporate valid critique and preserve accurate citations.\n\nDRAFT:\n${draft}\n\nCRITIQUE:\n${critique}` },
-      ]), emitToken, signal),
+      options.providers.model.streamChat(requestFor(options, "final", withStageInstruction(
+        sharedMessages,
+        `Write the final revised answer only. Incorporate valid critique and preserve accurate citations.\n\nDRAFT:\n${draft}\n\nCRITIQUE:\n${critique}`,
+      )), emitToken, signal),
     );
   } else {
     options.onStage("answering");

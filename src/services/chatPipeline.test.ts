@@ -60,6 +60,14 @@ describe("chat pipeline", () => {
     expect(providers.search.search).toHaveBeenCalledOnce();
     expect(providers.model.completeChat).toHaveBeenCalledTimes(2);
     expect(providers.model.streamChat).toHaveBeenCalledOnce();
+    for (const [request] of vi.mocked(providers.model.completeChat).mock.calls) {
+      expect(request.messages[0].role).toBe("system");
+      expect(request.messages.filter((message) => message.role === "system")).toHaveLength(1);
+    }
+    for (const [request] of vi.mocked(providers.model.streamChat).mock.calls) {
+      expect(request.messages[0].role).toBe("system");
+      expect(request.messages.filter((message) => message.role === "system")).toHaveLength(1);
+    }
     expect(stages).toEqual(["searching", "drafting", "critiquing", "revising"]);
     expect(tokens).toEqual(["final"]);
   });

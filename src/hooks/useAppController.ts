@@ -242,6 +242,7 @@ export function useAppController() {
                 "STREAM_INTERRUPTED",
                 "연결을 확인하고 메시지를 다시 보내세요.",
               );
+        log(`Chat request failed: ${appError.message}`, "error");
         if (appError.code !== "REQUEST_CANCELLED") setError(appError);
         persistConversations((items) =>
           items.map((item) =>
@@ -275,6 +276,7 @@ export function useAppController() {
       context,
       createConversationRecord,
       isStreaming,
+      log,
       persistConversations,
       prepare,
       selectedModelId,
