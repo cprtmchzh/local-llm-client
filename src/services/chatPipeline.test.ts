@@ -72,6 +72,26 @@ describe("chat pipeline", () => {
     expect(tokens).toEqual(["final"]);
   });
 
+  it("falls back to a direct answer when a Deep Review internal stage has no visible content", async () => {
+    const { providers, context } = fixture();
+    providers.model.completeChat = vi.fn(async () => {
+      throw new Error("model response did not contain visible content");
+    });
+    const stages: string[] = [];
+    let warnings: string[] = [];
+
+    await runChatPipeline({
+      providers, context, requestId: "request", messages: [{ role: "user", content: "analyze this" }],
+      searchMode: "off", reasoningMode: "deep-review", signal: new AbortController().signal,
+      onToken: vi.fn(), onStage: (stage) => stages.push(stage),
+      onMetadata: (metadata) => { warnings = [...metadata.warnings]; },
+    });
+
+    expect(stages).toEqual(["drafting", "answering"]);
+    expect(warnings).toContain("Deep Review 내부 단계가 본문을 만들지 못해 일반 답변 모드로 자동 전환했습니다.");
+    expect(providers.model.streamChat).toHaveBeenCalledOnce();
+  });
+
   it("falls back to model-only answering when search fails", async () => {
     const { providers, context } = fixture();
     providers.search.search = vi.fn(async () => { throw new Error("offline"); });

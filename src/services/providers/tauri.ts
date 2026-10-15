@@ -169,11 +169,34 @@ class TauriRuntimeProvider implements RuntimeProvider {
 class TauriModelProvider implements ModelProvider {
   constructor(private readonly connection: TauriConnectionProvider) {}
 
+  private visibleOutputRequest(request: ChatRequest): ChatRequest {
+    const messages = [...request.messages];
+    const instruction = "Return visible final text immediately. Do not emit reasoning-only output. /no_think";
+    if (messages[0]?.role === "system") {
+      messages[0] = { ...messages[0], content: `${messages[0].content}\n\n${instruction}` };
+    } else {
+      messages.unshift({ role: "system", content: instruction });
+    }
+    return { ...request, requestId: `${request.requestId}:visible`, messages };
+  }
+
   async isHealthy(context: ProviderContext): Promise<boolean> {
     return invoke<boolean>("check_http_health", { url: `${this.connection.apiBaseUrl(context).replace(/\/v1$/, "")}${context.profile.healthEndpoint}`, timeoutMs: 2_000 });
   }
 
   async streamChat(request: ChatRequest, onToken: (token: string) => void, signal?: AbortSignal): Promise<void> {
+    let visibleContent = "";
+    const emitVisible = (token: string) => {
+      visibleContent += token;
+      onToken(token);
+    };
+    await this.streamChatOnce(request, emitVisible, signal);
+    if (visibleContent.trim()) return;
+    await this.streamChatOnce(this.visibleOutputRequest(request), emitVisible, signal);
+    if (!visibleContent.trim()) throw new Error("model response did not contain visible content");
+  }
+
+  private async streamChatOnce(request: ChatRequest, onToken: (token: string) => void, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) throw cancelled();
     const tokenEvent = `chat://token/${request.requestId}`;
     const doneEvent = `chat://done/${request.requestId}`;
@@ -213,7 +236,7 @@ class TauriModelProvider implements ModelProvider {
     await this.streamChat(request, (token) => {
       content += token;
     }, signal);
-    if (!content.trim()) throw new Error("model response did not contain content");
+    if (!content.trim()) throw new Error("model response did not contain visible content");
     return content;
   }
 

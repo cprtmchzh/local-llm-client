@@ -231,20 +231,36 @@ export async function runChatPipeline(options: ChatPipelineOptions): Promise<Cha
   ];
 
   if (reasoning.resolved === "deep-review") {
-    options.onStage("drafting");
-    const draft = await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
-      options.providers.model.completeChat(requestFor(options, "draft", withStageInstruction(
-        sharedMessages,
-        "Create a complete draft answer. Return the draft only.",
-      )), signal),
-    );
-    options.onStage("critiquing");
-    const critique = await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
-      options.providers.model.completeChat(requestFor(options, "critique", withStageInstruction(
-        sharedMessages,
-        `Critique the draft for accuracy, completeness, safety, and citation quality. Return actionable critique only.\n\nDRAFT:\n${draft}`,
-      )), signal),
-    );
+    let draft: string;
+    let critique: string;
+    try {
+      options.onStage("drafting");
+      draft = await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
+        options.providers.model.completeChat(requestFor(options, "draft", withStageInstruction(
+          sharedMessages,
+          "Create a complete draft answer. Return visible draft text only. /no_think",
+        )), signal),
+      );
+      options.onStage("critiquing");
+      critique = await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
+        options.providers.model.completeChat(requestFor(options, "critique", withStageInstruction(
+          sharedMessages,
+          `Critique the draft for accuracy, completeness, safety, and citation quality. Return visible actionable critique only. /no_think\n\nDRAFT:\n${draft}`,
+        )), signal),
+      );
+    } catch (error) {
+      if (error instanceof AppError && error.code === "REQUEST_CANCELLED") throw error;
+      warnings.push("Deep Review 내부 단계가 본문을 만들지 못해 일반 답변 모드로 자동 전환했습니다.");
+      options.onMetadata(metadata);
+      options.onStage("answering");
+      await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
+        options.providers.model.streamChat(requestFor(options, "deep-review-fallback", withStageInstruction(
+          sharedMessages,
+          "Answer the user directly with visible final text. /no_think",
+        )), emitToken, signal),
+      );
+      return metadata;
+    }
     options.onStage("revising");
     await runStage(options.signal, options.context.settings.modelTimeoutMs, (signal) =>
       options.providers.model.streamChat(requestFor(options, "final", withStageInstruction(
