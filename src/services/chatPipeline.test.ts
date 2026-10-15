@@ -85,6 +85,23 @@ describe("chat pipeline", () => {
     expect(providers.model.streamChat).toHaveBeenCalledOnce();
   });
 
+  it("shows an actionable message when the Tavily credential is missing", async () => {
+    const { providers, context } = fixture();
+    providers.search.search = vi.fn(async () => {
+      throw new Error("credential error: Tavily API key is not configured");
+    });
+    let warnings: string[] = [];
+    await runChatPipeline({
+      providers, context, requestId: "request", messages: [{ role: "user", content: "최신 보안 뉴스" }],
+      searchMode: "on", reasoningMode: "normal", signal: new AbortController().signal,
+      onToken: vi.fn(), onStage: vi.fn(), onMetadata: (metadata) => { warnings = metadata.warnings; },
+    });
+
+    expect(warnings).toEqual([
+      "Tavily API 키가 설정되지 않아 모델 전용 답변으로 전환했습니다. 설정 → 웹 검색에서 API 키를 등록하세요.",
+    ]);
+  });
+
   it("times out a stalled search and continues with a visible fallback", async () => {
     const { providers, context } = fixture();
     context.settings.searchTimeoutMs = 5;

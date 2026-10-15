@@ -202,7 +202,10 @@ export async function runChatPipeline(options: ChatPipelineOptions): Promise<Cha
       if (!citations.length) warnings.push("검색 결과가 없어 모델 지식만으로 답변했습니다.");
     } catch (error) {
       if (error instanceof AppError && error.code === "REQUEST_CANCELLED") throw error;
-      warnings.push(`웹 검색을 사용할 수 없어 모델 전용 답변으로 전환했습니다: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      warnings.push(message.includes("Tavily API key is not configured")
+        ? "Tavily API 키가 설정되지 않아 모델 전용 답변으로 전환했습니다. 설정 → 웹 검색에서 API 키를 등록하세요."
+        : `웹 검색을 사용할 수 없어 모델 전용 답변으로 전환했습니다: ${message}`);
     }
   }
 

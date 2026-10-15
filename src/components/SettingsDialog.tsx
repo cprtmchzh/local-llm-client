@@ -108,13 +108,13 @@ export function SettingsDialog({ initial, onSave, onClose }: SettingsDialogProps
               <>
                 <div className="section-copy"><h3>웹 검색</h3><p>검색 요청은 UI가 아닌 Tauri 네이티브 계층에서 수행됩니다.</p></div>
                 <label><span>Search Provider</span><select value={settings.searchProvider} onChange={(event) => update("searchProvider", event.target.value as AppSettings["searchProvider"])}><option value="tavily">Tavily</option></select></label>
-                <label><span>Tavily API 키</span><div className="password-field"><KeyRound size={16} /><input type={showPassword ? "text" : "password"} value={searchApiKey} autoComplete="new-password" placeholder="OS 자격 증명 저장소에만 저장" onChange={(event) => setSearchApiKey(event.target.value)} /></div></label>
+                <label><span>Tavily API 키</span><div className="password-field"><KeyRound size={16} /><input type={showPassword ? "text" : "password"} value={searchApiKey} autoComplete="new-password" placeholder="API 키 입력 후 설정 저장" onChange={(event) => setSearchApiKey(event.target.value)} /></div></label>
                 <div className="field-row">
                   <label><span>최대 검색 결과</span><input type="number" min="1" max="10" value={settings.searchMaxResults} onChange={(event) => update("searchMaxResults", Number(event.target.value))} /></label>
                   <label><span>검색 제한 시간 (ms)</span><input type="number" min="1000" max="60000" step="1000" value={settings.searchTimeoutMs} onChange={(event) => update("searchTimeoutMs", Number(event.target.value))} /></label>
                 </div>
                 <div className="info-panel"><strong>모델 응답 시간</strong><p>답변 생성은 시간 제한 없이 계속되며, 작성 중에는 취소 버튼으로 직접 중단할 수 있습니다.</p></div>
-                <div className="info-panel"><strong>보안 저장</strong><p>API 키는 localStorage에 기록되지 않으며 macOS Keychain 또는 Windows Credential Manager에 저장됩니다.</p></div>
+                <div className="info-panel"><strong>보안 저장</strong><p>API 키는 localStorage에 기록되지 않으며 설정 저장 시 macOS Keychain 또는 Windows Credential Manager에 저장됩니다.</p></div>
               </>
             ) : null}
             {tab === "application" ? (
