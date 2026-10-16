@@ -15,11 +15,12 @@ const repository: WorkspaceRepository = {
 };
 
 describe("WorkspaceToolProvider", () => {
-  it("returns a command exit 1 as structured tool output, not a transport exception", async () => {
+  it("returns a command exit 1 as a failed result with structured output", async () => {
     const provider = new WorkspaceToolProvider(workspace, repository, async (command) => ({ command, stdout: "", stderr: "tests failed", exitCode: 1, durationMs: 12, timedOut: false }));
     const result = await provider.execute({ id: "shell-1", tool: "shell", workspaceId: workspace.id, arguments: { command: "npm test" } });
-    expect(result.success).toBe(true);
+    expect(result.success).toBe(false);
     expect(result.output).toMatchObject({ exitCode: 1, stderr: "tests failed" });
+    expect(result.error?.message).toContain("code 1");
   });
 
   it("keeps diff and changed paths in patch metadata", async () => {

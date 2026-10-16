@@ -26,7 +26,7 @@ interface AgentWorkspaceProps {
   isStarting: boolean;
   modelControl: ReactNode;
   diffDecisions: Record<string, "accepted" | "reverted">;
-  onOpen: (path: string) => void;
+  onBrowse: () => void;
   onSelect: (workspace: Workspace) => void;
   onStart: (task: string) => void;
   onStop: () => void;
@@ -44,6 +44,7 @@ const statusLabels: Record<AgentStatus, string> = {
   waiting_tool: "결과 대기 중",
   waiting_approval: "승인 대기 중",
   processing_result: "결과 정리 중",
+  verifying: "완료 조건 검증 중",
   completed: "완료",
   failed: "실패",
   cancelled: "취소됨",
@@ -59,7 +60,7 @@ export function AgentWorkspace({
   isStarting,
   modelControl,
   diffDecisions,
-  onOpen,
+  onBrowse,
   onSelect,
   onStart,
   onStop,
@@ -67,7 +68,6 @@ export function AgentWorkspace({
   onAcceptDiff,
   onRevertDiff,
 }: AgentWorkspaceProps) {
-  const [path, setPath] = useState("");
   const [task, setTask] = useState("");
   const [explorerOpen, setExplorerOpen] = useState(() => !activeWorkspace);
   const busy = isStarting || Boolean(run && !completedStatuses.includes(run.status));
@@ -93,6 +93,10 @@ export function AgentWorkspace({
     return () => document.removeEventListener("keydown", toggleExplorer);
   }, []);
 
+  useEffect(() => {
+    if (!activeWorkspace) setExplorerOpen(true);
+  }, [activeWorkspace]);
+
   return (
     <main className={`agent-shell${explorerOpen ? " explorer-open" : ""}`}>
       {explorerOpen ? <aside className="agent-navigator" aria-label="Agent 탐색기">
@@ -112,26 +116,16 @@ export function AgentWorkspace({
             <h3><Folder size={13} aria-hidden="true" /> 프로젝트</h3>
             <span>{workspaces.length}</span>
           </div>
-          <form
-            className="workspace-open"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (path.trim()) {
-                onOpen(path.trim());
-                setExplorerOpen(false);
-              }
+          <button
+            type="button"
+            className="workspace-browse"
+            onClick={() => {
+              onBrowse();
+              setExplorerOpen(false);
             }}
           >
-            <input
-              aria-label="Workspace 폴더 경로"
-              placeholder="/path/to/project"
-              value={path}
-              onChange={(event) => setPath(event.target.value)}
-            />
-            <button type="submit" aria-label="Workspace 열기" title="Workspace 열기" disabled={!path.trim()}>
-              <FolderOpen size={16} aria-hidden="true" />
-            </button>
-          </form>
+            <FolderOpen size={15} aria-hidden="true" /> 프로젝트 폴더 선택
+          </button>
           <div className="workspace-list">
             {workspaces.map((workspace) => (
               <button
@@ -148,7 +142,7 @@ export function AgentWorkspace({
                 <span>{workspace.name}</span>
               </button>
             ))}
-            {workspaces.length === 0 ? <p>폴더 경로를 입력해 프로젝트를 연결하세요.</p> : null}
+            {workspaces.length === 0 ? <p>운영체제 폴더 선택창에서 프로젝트를 연결하세요.</p> : null}
           </div>
         </section>
 
@@ -212,6 +206,23 @@ export function AgentWorkspace({
           ) : null}
         </header>
 
+        {run ? (
+          <div className="agent-progress" aria-label="Agent 진행 상태">
+            <span className="objective" title={run.task}>목표 · {run.task}</span>
+            <span><strong>{run.progress.cycle}</strong> 사이클</span>
+            <span><strong>{run.progress.toolCalls}</strong> 도구 실행</span>
+            <span className={`verification ${run.progress.verificationStatus}`}>
+              {run.progress.verificationStatus === "passed"
+                ? "검증 통과"
+                : run.progress.verificationStatus === "pending"
+                  ? "변경 검증 필요"
+                  : run.progress.verificationStatus === "failed"
+                    ? "검증 실패 · 수정 중"
+                    : "변경 전"}
+            </span>
+          </div>
+        ) : null}
+
         <div className="agent-activity">
           {run?.steps.map((step) => {
             const failed = step.toolResult?.success === false;
@@ -239,6 +250,13 @@ export function AgentWorkspace({
             </article>
           ) : null}
 
+          {run && !run.finalResponse && completedStatuses.includes(run.status) ? (
+            <article className={`agent-terminal ${run.status}`}>
+              <strong>{run.status === "cancelled" ? "작업이 중지되었습니다" : "작업을 완수하지 못했습니다"}</strong>
+              <p>종료 사유: {run.stopReason ?? run.status}</p>
+            </article>
+          ) : null}
+
           {!run ? (
             <div className="agent-empty">
               {activeWorkspace ? <Play size={27} aria-hidden="true" /> : <FolderOpen size={27} aria-hidden="true" />}
@@ -246,7 +264,7 @@ export function AgentWorkspace({
               <p>
                 {activeWorkspace
                   ? "필요한 파일만 확인하고 변경 전에는 정책과 승인 단계를 거칩니다."
-                  : "좌측 탐색기에서 작업할 폴더 경로를 입력하면 시작할 수 있습니다."}
+                  : "좌측 탐색기에서 프로젝트 폴더를 선택하면 시작할 수 있습니다."}
               </p>
             </div>
           ) : null}
@@ -292,7 +310,7 @@ export function AgentWorkspace({
           </div>
           <footer className="agent-composer-footer">
             {modelControl}
-            <span>{busy ? "작업을 처리하고 있습니다" : "작업 범위와 원하는 결과를 구체적으로 입력하세요"}</span>
+            <span>{busy ? "완료 조건을 충족할 때까지 실행과 검증을 반복합니다" : "작업 범위와 원하는 결과를 구체적으로 입력하세요"}</span>
           </footer>
         </form>
       </section>

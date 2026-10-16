@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AgentModel, AgentRun, ApprovalRequest } from "../domain/agent";
 import type { ShellResult } from "../domain/tools";
 import type { AppSettings, ProviderContext } from "../domain/types";
@@ -46,10 +47,53 @@ export function useAgentController(
   }, [loadFiles, workspaceService]);
 
   const selectWorkspace = useCallback(async (workspace: Workspace) => {
-    setActiveWorkspace(workspace);
     setError(null);
-    try { await loadFiles(workspace); } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
-  }, [loadFiles]);
+    try {
+      const validated = await workspaceService.open(workspace.rootPath);
+      setWorkspaces(workspaceService.list());
+      setActiveWorkspace(validated);
+      await loadFiles(validated);
+      return true;
+    } catch (caught) {
+      workspaceService.remove(workspace.id);
+      setWorkspaces(workspaceService.list());
+      setActiveWorkspace((current) => current?.id === workspace.id ? null : current);
+      setFiles([]);
+      setError(caught instanceof Error ? caught.message : String(caught));
+      return false;
+    }
+  }, [loadFiles, workspaceService]);
+
+  const browseWorkspace = useCallback(async () => {
+    setError(null);
+    try {
+      if (settings.mockMode) {
+        await openWorkspace("/mock/workspace");
+        return;
+      }
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        defaultPath: activeWorkspace?.rootPath,
+        title: "Agent 작업 폴더 선택",
+      });
+      if (typeof selected === "string") await openWorkspace(selected);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }, [activeWorkspace?.rootPath, openWorkspace, settings.mockMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      for (const recentWorkspace of workspaceService.list()) {
+        if (cancelled) return;
+        if (await selectWorkspace(recentWorkspace)) return;
+      }
+      if (!cancelled) setError(null);
+    })();
+    return () => { cancelled = true; };
+  }, [selectWorkspace, workspaceService]);
 
   const start = useCallback(async (task: string) => {
     if (!context || !activeWorkspace || !task.trim()) return;
@@ -62,12 +106,12 @@ export function useAgentController(
       await ensureReady();
       if (generation !== generationRef.current) return;
       const providers = getProviders(settings);
-      const model: AgentModel = { respond: ({ task: currentTask, steps, tools }) => providers.model.completeAgent(context, currentTask, steps, tools) };
+      const model: AgentModel = { respond: ({ task: currentTask, steps, tools }, signal) => providers.model.completeAgent(context, currentTask, steps, tools, signal) };
       const shellExecutor = settings.mockMode
         ? async (command: string): Promise<ShellResult> => ({ command, stdout: "Mock command completed", stderr: "", exitCode: 0, durationMs: 0, timedOut: false })
         : (command: string, timeoutMs: number) => invoke<ShellResult>("execute_workspace_shell", { rootPath: activeWorkspace.rootPath, command, timeoutMs });
       const toolProvider = new WorkspaceToolProvider(activeWorkspace, repository, shellExecutor);
-      const orchestrator = new AgentOrchestrator(model, toolProvider, new DefaultToolPolicy(), {
+      const orchestrator = new AgentOrchestrator(model, toolProvider, new DefaultToolPolicy(true), {
         onUpdate: setRun,
         requestApproval: (request) => new Promise<boolean>((resolve) => {
           approvalResolverRef.current = resolve;
@@ -117,5 +161,5 @@ export function useAgentController(
     }
   }, [activeWorkspace, loadFiles, repository]);
 
-  return { workspaces, activeWorkspace, files, run, approval, error, isStarting, diffDecisions, openWorkspace, selectWorkspace, start, stop, resolveApproval, acceptDiff, revertDiff };
+  return { workspaces, activeWorkspace, files, run, approval, error, isStarting, diffDecisions, openWorkspace, browseWorkspace, selectWorkspace, start, stop, resolveApproval, acceptDiff, revertDiff };
 }

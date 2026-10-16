@@ -13,6 +13,7 @@ const workspace: Workspace = {
 };
 
 function renderAgent(activeWorkspace: Workspace | null = workspace) {
+  const onBrowse = vi.fn();
   render(
     <AgentWorkspace
       workspaces={[workspace]}
@@ -24,7 +25,7 @@ function renderAgent(activeWorkspace: Workspace | null = workspace) {
       isStarting={false}
       diffDecisions={{}}
       modelControl={<button type="button">테스트 모델</button>}
-      onOpen={vi.fn()}
+      onBrowse={onBrowse}
       onSelect={vi.fn()}
       onStart={vi.fn()}
       onStop={vi.fn()}
@@ -33,6 +34,7 @@ function renderAgent(activeWorkspace: Workspace | null = workspace) {
       onRevertDiff={vi.fn()}
     />,
   );
+  return { onBrowse };
 }
 
 describe("AgentWorkspace", () => {
@@ -54,5 +56,15 @@ describe("AgentWorkspace", () => {
 
     expect(screen.getByRole("complementary", { name: "Agent 탐색기" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "테스트 모델" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Workspace 폴더 경로" })).not.toBeInTheDocument();
+  });
+
+  it("opens the native project folder picker", async () => {
+    const user = userEvent.setup();
+    const { onBrowse } = renderAgent(null);
+
+    await user.click(screen.getByRole("button", { name: "프로젝트 폴더 선택" }));
+
+    expect(onBrowse).toHaveBeenCalledOnce();
   });
 });

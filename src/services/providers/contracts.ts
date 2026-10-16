@@ -26,7 +26,7 @@ export interface ModelProvider {
   isHealthy(context: ProviderContext): Promise<boolean>;
   streamChat(request: ChatRequest, onToken: (token: string) => void, signal?: AbortSignal): Promise<void>;
   completeChat(request: ChatRequest, signal?: AbortSignal): Promise<string>;
-  completeAgent(context: ProviderContext, task: string, steps: unknown[], tools: unknown[]): Promise<AgentResponse>;
+  completeAgent(context: ProviderContext, task: string, steps: unknown[], tools: unknown[], signal?: AbortSignal): Promise<AgentResponse>;
 }
 
 export interface SearchRequest {

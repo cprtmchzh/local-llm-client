@@ -7,6 +7,7 @@ export type AgentStatus =
   | "waiting_tool"
   | "waiting_approval"
   | "processing_result"
+  | "verifying"
   | "completed"
   | "failed"
   | "cancelled";
@@ -44,6 +45,18 @@ export interface AgentRun {
   updatedAt: string;
   finalResponse?: string;
   stopReason?: AgentStopReason;
+  progress: AgentProgress;
+}
+
+export type AgentVerificationStatus = "not_required" | "pending" | "passed" | "failed";
+
+export interface AgentProgress {
+  cycle: number;
+  toolCalls: number;
+  successfulToolCalls: number;
+  consecutiveFailures: number;
+  verificationStatus: AgentVerificationStatus;
+  lastVerificationCommand?: string;
 }
 
 export interface ApprovalRequest {

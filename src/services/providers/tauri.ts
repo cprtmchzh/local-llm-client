@@ -4,7 +4,7 @@ import type { AgentResponse } from "../../domain/agent";
 import { renderLaunchCommand } from "../../domain/launchCommand";
 import type { ShellResult } from "../../domain/tools";
 import type { ChatRequest, Citation, ProviderContext, RuntimeInstance } from "../../domain/types";
-import { normalizeOpenAiAgentResponse, qwenToolsPrompt } from "../modelAdapter";
+import { compactAgentSteps, normalizeOpenAiAgentResponse, qwenToolsPrompt } from "../modelAdapter";
 import type { ConnectionProvider, ModelProvider, ProviderBundle, RuntimeProvider, SearchProvider, SearchRequest, WakeProvider } from "./contracts";
 
 function cancelled(): DOMException {
@@ -285,9 +285,25 @@ class TauriModelProvider implements ModelProvider {
     return result;
   }
 
-  async completeAgent(context: ProviderContext, task: string, steps: unknown[], tools: unknown[]): Promise<AgentResponse> {
-    const names = tools.map((tool) => typeof tool === "string" ? tool : JSON.stringify(tool));
-    const raw = await invoke<unknown>("complete_agent", { baseUrl: this.connection.apiBaseUrl(context), model: context.model.modelPath, temperature: context.profile.temperature, system: qwenToolsPrompt(names), task, steps, tools });
+  async completeAgent(context: ProviderContext, task: string, steps: unknown[], tools: unknown[], signal?: AbortSignal): Promise<AgentResponse> {
+    const requestId = crypto.randomUUID();
+    const names = tools.map((tool) => typeof tool === "object" && tool && "name" in tool ? String(tool.name) : String(tool));
+    const raw = await invokeWithCancellation<unknown>(
+      "complete_agent",
+      {
+        requestId,
+        baseUrl: this.connection.apiBaseUrl(context),
+        model: context.model.modelPath,
+        temperature: context.profile.temperature,
+        system: qwenToolsPrompt(names),
+        task,
+        steps: compactAgentSteps(steps as import("../../domain/agent").AgentStep[]),
+        tools,
+      },
+      signal,
+      "cancel_agent",
+      requestId,
+    );
     return normalizeOpenAiAgentResponse(raw);
   }
 }

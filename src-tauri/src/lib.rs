@@ -26,12 +26,13 @@ const SSH_PASSWORD_SERVICE: &str = "local-llm-client.ssh";
 const SSH_KEY_SERVICE: &str = "local-llm-client.ssh-key";
 const TAVILY_SEARCH_SERVICE: &str = "local-llm-client.search.tavily";
 const MAX_TOOL_OUTPUT: usize = 1024 * 1024;
-const MAX_AGENT_STEP_CONTEXT: usize = 128 * 1024;
+const MAX_AGENT_STEP_CONTEXT: usize = 24 * 1024;
 const MAX_MODEL_ERROR_BODY: usize = 4 * 1024;
 static TUNNELS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
 static SYSTEM_SSH_TUNNELS: OnceLock<Mutex<HashMap<String, Child>>> = OnceLock::new();
 static RUNTIMES: OnceLock<Mutex<HashMap<String, RuntimeInstance>>> = OnceLock::new();
 static CHAT_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
+static AGENT_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
 static SEARCH_CANCELLATIONS: OnceLock<Mutex<HashMap<String, Arc<AtomicBool>>>> = OnceLock::new();
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -1038,6 +1039,14 @@ fn canonical_workspace(root_path: &str) -> Result<PathBuf, BackendError> {
             "workspace root must be a directory".into(),
         ));
     }
+    let is_home = dirs::home_dir()
+        .and_then(|home| fs::canonicalize(home).ok())
+        .is_some_and(|home| root == home);
+    if root.parent().is_none() || is_home {
+        return Err(BackendError::Configuration(
+            "workspace must be a project folder, not a filesystem root or home directory".into(),
+        ));
+    }
     Ok(root)
 }
 
@@ -1967,6 +1976,7 @@ async fn search_web(request: SearchRequest) -> Result<Vec<WebSearchResult>, Back
 
 #[tauri::command]
 async fn complete_agent(
+    request_id: String,
     base_url: String,
     model: String,
     temperature: f32,
@@ -1999,43 +2009,57 @@ async fn complete_agent(
         step_context.truncate(boundary);
         step_context.push_str("...[agent step context truncated]");
     }
-    let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
-    let response = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(8))
-        .timeout(Duration::from_secs(120))
-        .build()
-        .map_err(|error| BackendError::ModelApi(error.to_string()))?
-        .post(url)
-        .json(&json!({
+    let flag = cancellation_flag(&AGENT_CANCELLATIONS, &request_id)?;
+    let result = async {
+        let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+        let send = model_http_client(0)?
+            .post(url)
+            .json(&json!({
             "model": model,
             "temperature": temperature,
             "messages": [
                 {"role":"system", "content":system},
-                {"role":"user", "content":task},
-                {"role":"system", "content":format!("Previous agent steps: {}", step_context)}
+                {"role":"user", "content":format!("Objective:\n{}\n\nExecution ledger:\n{}", task, step_context)}
             ],
             "tools": definitions,
             "tool_choice": "auto",
             "stream": false
-        }))
-        .send()
-        .await
-        .map_err(|error| BackendError::ModelApi(error.to_string()))?;
-    let status = response.status();
-    if !status.is_success() {
-        return Err(BackendError::ModelApi(format!(
-            "model API returned {status}"
-        )));
+            }))
+            .send();
+        let cancelled = wait_until_cancelled(flag.clone());
+        pin_mut!(send, cancelled);
+        let response = match select(send, cancelled).await {
+            Either::Left((response, _)) => {
+                response.map_err(|error| BackendError::ModelApi(error.to_string()))?
+            }
+            Either::Right((_, _)) => {
+                return Err(BackendError::ModelApi("request cancelled".into()))
+            }
+        };
+        if !response.status().is_success() {
+            return Err(BackendError::ModelApi(
+                model_api_error_message(response).await,
+            ));
+        }
+        response
+            .json()
+            .await
+            .map_err(|error| BackendError::ModelApi(error.to_string()))
     }
-    response
-        .json()
-        .await
-        .map_err(|error| BackendError::ModelApi(error.to_string()))
+    .await;
+    clear_cancellation(&AGENT_CANCELLATIONS, &request_id);
+    result
+}
+
+#[tauri::command]
+fn cancel_agent(request_id: String) -> Result<(), BackendError> {
+    cancel_request(&AGENT_CANCELLATIONS, request_id)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             check_host,
             send_magic_packet,
@@ -2065,7 +2089,8 @@ pub fn run() {
             cancel_chat,
             search_web,
             cancel_search,
-            complete_agent
+            complete_agent,
+            cancel_agent
         ])
         .build(tauri::generate_context!())
         .expect("error while building Local LLM Client")
@@ -2105,6 +2130,15 @@ mod tests {
         let root = std::env::temp_dir();
         assert!(safe_workspace_path(&root, "../secret", false).is_err());
         assert!(safe_workspace_path(&root, "/etc/passwd", false).is_err());
+    }
+
+    #[test]
+    fn rejects_broad_workspace_roots() {
+        #[cfg(unix)]
+        assert!(canonical_workspace("/").is_err());
+        if let Some(home) = dirs::home_dir() {
+            assert!(canonical_workspace(&home.to_string_lossy()).is_err());
+        }
     }
 
     #[test]

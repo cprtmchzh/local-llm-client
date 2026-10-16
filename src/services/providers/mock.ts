@@ -131,7 +131,7 @@ class MockModelProvider implements ModelProvider {
       : "검색 결과를 바탕으로 작성한 검토용 초안입니다. [1]";
   }
 
-  async completeAgent(_context: ProviderContext, task: string, steps: unknown[]): Promise<AgentResponse> {
+  async completeAgent(_context: ProviderContext, task: string, steps: unknown[], _tools: unknown[], _signal?: AbortSignal): Promise<AgentResponse> {
     if (steps.length === 0) return { type: "tool_call", id: crypto.randomUUID(), tool: "list_directory", arguments: { path: "" } };
     return { type: "final", content: `Mock agent completed: ${task}` };
   }

@@ -69,6 +69,11 @@ export class WorkspaceService {
     appStorage.saveWorkspaces(this.workspaces);
     return workspace;
   }
+
+  remove(workspaceId: string): void {
+    this.workspaces = this.workspaces.filter((workspace) => workspace.id !== workspaceId);
+    appStorage.saveWorkspaces(this.workspaces);
+  }
 }
 
 export class MockWorkspaceRepository implements WorkspaceRepository {

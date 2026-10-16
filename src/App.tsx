@@ -136,7 +136,7 @@ export default function App() {
             isStarting={agent.isStarting}
             diffDecisions={agent.diffDecisions}
             modelControl={modelControl}
-            onOpen={(path) => void agent.openWorkspace(path)}
+            onBrowse={() => void agent.browseWorkspace()}
             onSelect={(workspace) => void agent.selectWorkspace(workspace)}
             onStart={(task) => void agent.start(task)}
             onStop={agent.stop}

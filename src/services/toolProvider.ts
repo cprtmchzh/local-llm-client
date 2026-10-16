@@ -44,7 +44,26 @@ export class WorkspaceToolProvider implements ToolProvider {
         case "read_file": output = await this.repository.readFile(this.workspace, String(args.path ?? ""), Number(args.startLine ?? 1), Number(args.endLine ?? 400)); break;
         case "search_text": output = await this.repository.searchText(this.workspace, String(args.query ?? ""), String(args.path ?? ""), Number(args.limit ?? 200)); break;
         case "file_metadata": output = await this.repository.metadata(this.workspace, String(args.path ?? "")); break;
-        case "shell": output = await this.shellExecutor(String(args.command ?? ""), Number(args.timeoutMs ?? 120_000)); break;
+        case "shell": {
+          const shell = await this.shellExecutor(String(args.command ?? ""), Number(args.timeoutMs ?? 120_000));
+          output = shell;
+          if (shell.exitCode !== 0 || shell.timedOut) {
+            return {
+              tool: request.tool,
+              success: false,
+              output,
+              durationMs: performance.now() - started,
+              metadata: { startedAt, finishedAt: new Date().toISOString(), truncated: shell.truncated },
+              error: {
+                code: "EXECUTION_FAILED",
+                message: shell.timedOut
+                  ? `Command timed out after ${shell.durationMs}ms`
+                  : `Command exited with code ${shell.exitCode}`,
+              },
+            };
+          }
+          break;
+        }
         case "apply_patch": {
           const applied = await this.repository.applyPatch(this.workspace, String(args.patch ?? ""));
           output = applied;

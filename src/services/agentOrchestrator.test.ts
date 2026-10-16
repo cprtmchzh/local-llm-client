@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentModel, AgentResponse } from "../domain/agent";
 import { MockToolProvider } from "./toolProvider";
-import { AgentOrchestrator } from "./agentOrchestrator";
+import { AgentOrchestrator, isVerificationCommand } from "./agentOrchestrator";
 import { DefaultToolPolicy } from "./toolPolicy";
 
 class SequenceModel implements AgentModel {
@@ -14,6 +14,12 @@ class SequenceModel implements AgentModel {
 }
 
 describe("AgentOrchestrator", () => {
+  it("does not accept verification commands that mask failures", () => {
+    expect(isVerificationCommand("npm test")).toBe(true);
+    expect(isVerificationCommand("npm test || true")).toBe(false);
+    expect(isVerificationCommand("cargo test; exit 0")).toBe(false);
+  });
+
   it("runs a deterministic tool loop to a final response", async () => {
     const tools = new MockToolProvider({ read_file: { content: "hello" } });
     const model = new SequenceModel([
@@ -25,6 +31,38 @@ describe("AgentOrchestrator", () => {
     expect(run.stopReason).toBe("final_response");
     expect(run.steps).toHaveLength(1);
     expect(tools.requests).toHaveLength(1);
+  });
+
+  it("continues cycling until edits are verified", async () => {
+    const tools = new MockToolProvider();
+    const model = new SequenceModel([
+      { type: "tool_call", id: "inspect", tool: "read_file", arguments: { path: "src/app.ts" } },
+      { type: "tool_call", id: "patch", tool: "apply_patch", arguments: { patch: "diff" } },
+      { type: "final", content: "premature" },
+      { type: "tool_call", id: "verify", tool: "shell", arguments: { command: "npm test" } },
+      { type: "final", content: "verified" },
+    ]);
+    const run = await new AgentOrchestrator(model, tools, new DefaultToolPolicy(true)).run("Fix", "workspace");
+
+    expect(run.status).toBe("completed");
+    expect(run.finalResponse).toBe("verified");
+    expect(run.progress.verificationStatus).toBe("passed");
+    expect(run.steps.some((step) => step.status === "verifying")).toBe(true);
+    expect(tools.requests.map((request) => request.tool)).toEqual(["read_file", "apply_patch", "shell"]);
+  });
+
+  it("requires workspace evidence before accepting a final response", async () => {
+    const tools = new MockToolProvider();
+    const model = new SequenceModel([
+      { type: "final", content: "guessed" },
+      { type: "tool_call", id: "inspect", tool: "list_directory", arguments: { path: "" } },
+      { type: "final", content: "grounded" },
+    ]);
+    const run = await new AgentOrchestrator(model, tools, new DefaultToolPolicy()).run("Inspect", "workspace");
+
+    expect(run.status).toBe("completed");
+    expect(run.finalResponse).toBe("grounded");
+    expect(run.steps[0]?.status).toBe("verifying");
   });
 
   it("does not execute an ASK tool before approval", async () => {
